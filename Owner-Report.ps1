@@ -1,4 +1,4 @@
-# Import psPAS Module
+# Import the psPAS module
 Import-Module psPAS -ErrorAction Stop
 
 # Define log file and logging function
@@ -14,17 +14,15 @@ function Write-Log {
 # Prompt for credentials
 $Cred = Get-Credential
 
-# Connect to CyberArk Privilege Cloud (replace with your values)
-$IdentityTenantURL = "https://alliantcredit.id.cyberark.cloud"
-$PCloudSubdomain = "alliantcredit"
+# Define PVWA / Privilege Cloud base URL
+$PVWAURL = "https://alliantcredit.privilegecloud.cyberark.com"
 
-# Establish session (Identity Admin only)
+# Authenticate using New-PASSession
 try {
-    $Header = Get-IdentityHeader -IdentityTenantURL $IdentityTenantURL -psPASFormat -PCloudSubdomain $PCloudSubdomain -UPCreds $Cred
-    Use-PASSession $Header
-    Write-Log "✅ Connected to CyberArk Privilege Cloud."
+    New-PASSession -Credential $Cred -BaseURI $PVWAURL
+    Write-Log "✅ Connected to CyberArk Privilege Cloud using psPAS."
 } catch {
-    Write-Log "❌ Authentication failed: $_"
+    Write-Log "❌ Authentication failed using New-PASSession: $_"
     exit
 }
 
@@ -45,7 +43,7 @@ foreach ($Safe in $Safes) {
     Write-Log "🔹 Retrieving members for Safe: ${SafeName}"
 
     try {
-        # Fetch Safe Members
+        # Fetch Safe Members using psPAS
         $SafeMembers = Get-PASSafeMember -SafeName $SafeName
 
         if ($SafeMembers.Count -eq 0) {
@@ -56,30 +54,30 @@ foreach ($Safe in $Safes) {
         foreach ($Member in $SafeMembers) {
             $SafeMembersReport += [PSCustomObject]@{
                 SafeName                                 = $SafeName
-                Member                                    = $Member.MemberName
-                MemberType                                = $Member.MemberType
-                UseAccounts                               = $Member.Permissions.useAccounts
-                RetrieveAccounts                          = $Member.Permissions.retrieveAccounts
-                ListAccounts                              = $Member.Permissions.listAccounts
-                AddAccounts                               = $Member.Permissions.addAccounts
-                UpdateAccountContent                      = $Member.Permissions.updateAccountContent
-                UpdateAccountProperties                   = $Member.Permissions.updateAccountProperties
-                InitiateCPMAccountManagementOperations    = $Member.Permissions.initiateCPMAccountManagementOperations
-                SpecifyNextAccountContent                 = $Member.Permissions.specifyNextAccountContent
-                RenameAccounts                            = $Member.Permissions.renameAccounts
-                DeleteAccounts                            = $Member.Permissions.deleteAccounts
-                UnlockAccounts                            = $Member.Permissions.unlockAccounts
-                ManageSafe                                = $Member.Permissions.manageSafe
-                ManageSafeMembers                         = $Member.Permissions.manageSafeMembers
-                BackupSafe                                = $Member.Permissions.backupSafe
-                ViewAuditLog                              = $Member.Permissions.viewAuditLog
-                ViewSafeMembers                           = $Member.Permissions.viewSafeMembers
-                AccessWithoutConfirmation                 = $Member.Permissions.accessWithoutConfirmation
-                CreateFolders                             = $Member.Permissions.createFolders
-                DeleteFolders                             = $Member.Permissions.deleteFolders
-                MoveAccountsAndFolders                    = $Member.Permissions.moveAccountsAndFolders
-                RequestsAuthorizationLevel1               = $Member.Permissions.requestsAuthorizationLevel1
-                RequestsAuthorizationLevel2               = $Member.Permissions.requestsAuthorizationLevel2
+                Member                                   = $Member.MemberName
+                MemberType                               = $Member.MemberType
+                UseAccounts                              = $Member.Permissions.useAccounts
+                RetrieveAccounts                         = $Member.Permissions.retrieveAccounts
+                ListAccounts                             = $Member.Permissions.listAccounts
+                AddAccounts                              = $Member.Permissions.addAccounts
+                UpdateAccountContent                     = $Member.Permissions.updateAccountContent
+                UpdateAccountProperties                  = $Member.Permissions.updateAccountProperties
+                InitiateCPMAccountManagementOperations   = $Member.Permissions.initiateCPMAccountManagementOperations
+                SpecifyNextAccountContent                = $Member.Permissions.specifyNextAccountContent
+                RenameAccounts                           = $Member.Permissions.renameAccounts
+                DeleteAccounts                           = $Member.Permissions.deleteAccounts
+                UnlockAccounts                           = $Member.Permissions.unlockAccounts
+                ManageSafe                               = $Member.Permissions.manageSafe
+                ManageSafeMembers                        = $Member.Permissions.manageSafeMembers
+                BackupSafe                               = $Member.Permissions.backupSafe
+                ViewAuditLog                             = $Member.Permissions.viewAuditLog
+                ViewSafeMembers                          = $Member.Permissions.viewSafeMembers
+                AccessWithoutConfirmation                = $Member.Permissions.accessWithoutConfirmation
+                CreateFolders                            = $Member.Permissions.createFolders
+                DeleteFolders                            = $Member.Permissions.deleteFolders
+                MoveAccountsAndFolders                   = $Member.Permissions.moveAccountsAndFolders
+                RequestsAuthorizationLevel1              = $Member.Permissions.requestsAuthorizationLevel1
+                RequestsAuthorizationLevel2              = $Member.Permissions.requestsAuthorizationLevel2
             }
         }
         Write-Log "✅ Retrieved $($SafeMembers.Count) members for Safe: ${SafeName}"
@@ -88,13 +86,13 @@ foreach ($Safe in $Safes) {
     }
 }
 
-# Step 4: Export Report
+# Step 4: Export Report to CSV
 $CsvFilePath = "E:\Installation Media\RemovePendingAccount\SafeMemberReport.csv"
 try {
     $SafeMembersReport | Export-Csv -Path $CsvFilePath -NoTypeInformation -Encoding UTF8
     Write-Log "✅ Safe Member Report successfully exported to: $CsvFilePath"
 } catch {
-    Write-Log "❌ Failed to export CSV: $_"
+    Write-Log "❌ Failed to export Safe Member Report to CSV: $_"
 }
 
 Write-Log "🔹 Safe Member Report generation completed."
