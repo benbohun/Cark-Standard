@@ -1,3 +1,41 @@
+# Import psPAS Module
+Import-Module psPAS -ErrorAction Stop
+
+# Define log file and logging function
+$LogFile = "SafeMemberAudit.log"
+function Write-Log {
+    param ([string]$Message)
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $entry = "$timestamp | $Message"
+    Add-Content -Path $LogFile -Value $entry
+    Write-Host $entry
+}
+
+# Prompt for credentials
+$Cred = Get-Credential
+
+# Connect to CyberArk Privilege Cloud (replace with your values)
+$IdentityTenantURL = "https://alliantcredit.id.cyberark.cloud"
+$PCloudSubdomain = "alliantcredit"
+
+# Establish session (Identity Admin only)
+try {
+    $Header = Get-IdentityHeader -IdentityTenantURL $IdentityTenantURL -psPASFormat -PCloudSubdomain $PCloudSubdomain -UPCreds $Cred
+    Use-PASSession $Header
+    Write-Log "✅ Connected to CyberArk Privilege Cloud."
+} catch {
+    Write-Log "❌ Authentication failed: $_"
+    exit
+}
+
+# Step 2: Get all Safes
+try {
+    $Safes = Get-PASSafe
+    Write-Log "📦 Retrieved $($Safes.Count) safes."
+} catch {
+    Write-Log "❌ Failed to retrieve safes: $_"
+    exit
+}
 
 # Step 3: Retrieve Safe Members and Permissions
 $SafeMembersReport = @()
@@ -7,23 +45,23 @@ foreach ($Safe in $Safes) {
     Write-Log "🔹 Retrieving members for Safe: ${SafeName}"
 
     try {
-        # Fetch Safe Members using Get-PASSafeMember
+        # Fetch Safe Members
         $SafeMembers = Get-PASSafeMember -SafeName $SafeName
 
         if ($SafeMembers.Count -eq 0) {
             Write-Log "⚠️ No members found for Safe: ${SafeName}"
+            continue
         }
 
         foreach ($Member in $SafeMembers) {
-            # Ensure permission values are directly fetched from the API response
             $SafeMembersReport += [PSCustomObject]@{
-                SafeName                                    = $SafeName
-                Member                                      = $Member.MemberName
-                MemberType                                  = $Member.MemberType
-                UseAccounts                                = $Member.Permissions.useAccounts
-                RetrieveAccounts                           = $Member.Permissions.retrieveAccounts
-                ListAccounts                               = $Member.Permissions.listAccounts
-                AddAccounts                                = $Member.Permissions.addAccounts
+                SafeName                                 = $SafeName
+                Member                                    = $Member.MemberName
+                MemberType                                = $Member.MemberType
+                UseAccounts                               = $Member.Permissions.useAccounts
+                RetrieveAccounts                          = $Member.Permissions.retrieveAccounts
+                ListAccounts                              = $Member.Permissions.listAccounts
+                AddAccounts                               = $Member.Permissions.addAccounts
                 UpdateAccountContent                      = $Member.Permissions.updateAccountContent
                 UpdateAccountProperties                   = $Member.Permissions.updateAccountProperties
                 InitiateCPMAccountManagementOperations    = $Member.Permissions.initiateCPMAccountManagementOperations
@@ -40,8 +78,8 @@ foreach ($Safe in $Safes) {
                 CreateFolders                             = $Member.Permissions.createFolders
                 DeleteFolders                             = $Member.Permissions.deleteFolders
                 MoveAccountsAndFolders                    = $Member.Permissions.moveAccountsAndFolders
-                RequestsAuthorizationLevel1              = $Member.Permissions.requestsAuthorizationLevel1
-                RequestsAuthorizationLevel2              = $Member.Permissions.requestsAuthorizationLevel2
+                RequestsAuthorizationLevel1               = $Member.Permissions.requestsAuthorizationLevel1
+                RequestsAuthorizationLevel2               = $Member.Permissions.requestsAuthorizationLevel2
             }
         }
         Write-Log "✅ Retrieved $($SafeMembers.Count) members for Safe: ${SafeName}"
@@ -50,9 +88,13 @@ foreach ($Safe in $Safes) {
     }
 }
 
-# Step 4: Export Safe Member Report to CSV
-$CsvFilePath = "E:\Installation Media\RemovePendingAccount\SafeMemberReport.csv"  # Update this path as needed
-$SafeMembersReport | Export-Csv -Path $CsvFilePath -NoTypeInformation
+# Step 4: Export Report
+$CsvFilePath = "E:\Installation Media\RemovePendingAccount\SafeMemberReport.csv"
+try {
+    $SafeMembersReport | Export-Csv -Path $CsvFilePath -NoTypeInformation -Encoding UTF8
+    Write-Log "✅ Safe Member Report successfully exported to: $CsvFilePath"
+} catch {
+    Write-Log "❌ Failed to export CSV: $_"
+}
 
-Write-Log "✅ Safe Member Report successfully exported to: $CsvFilePath"
 Write-Log "🔹 Safe Member Report generation completed."
