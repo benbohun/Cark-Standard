@@ -6,21 +6,21 @@ $cred = Get-Credential
 $Username = $cred.UserName
 $Password = $cred.GetNetworkCredential().Password
 
-# Define CyberArk URLs
+# CyberArk Privilege Cloud
 $Subdomain = "alliantcredit"
 $BaseURL = "https://$Subdomain.privilegecloud.cyberark.com/PasswordVault/API"
 
-# Authenticate
+# Auth
 $AuthURL = "$BaseURL/auth/Cyberark/Logon/"
 try {
     $AuthToken = Invoke-RestMethod -Uri $AuthURL -Method POST -Body (@{ username = $Username; password = $Password } | ConvertTo-Json) -ContentType "application/json"
-    Write-Host "✅ Authentication successful." -ForegroundColor Green
+    Write-Host "✅ Authentication succeeded." -ForegroundColor Green
 } catch {
     Write-Host "❌ Authentication failed: $_" -ForegroundColor Red
     exit
 }
 
-# Set headers
+# Set Headers
 $Headers = @{
     Authorization = $AuthToken
     "Content-Type" = "application/json"
@@ -31,25 +31,38 @@ $SafesURL = "$BaseURL/Safes"
 try {
     $SafesResponse = Invoke-RestMethod -Uri $SafesURL -Headers $Headers -Method GET
     $SafeList = $SafesResponse.safes
-    Write-Host "📦 Retrieved $($SafeList.Count) safes." -ForegroundColor Green
+    Write-Host "`n🧾 Total safes found: $($SafeList.Count)" -ForegroundColor Green
+    if ($SafeList.Count -eq 0) {
+        Write-Host "⚠️ No safes found. Confirm user has Safe listing permissions." -ForegroundColor Red
+        exit
+    }
 } catch {
     Write-Host "❌ Failed to retrieve safes: $_" -ForegroundColor Red
     exit
 }
 
-# Prepare report array
+# Prepare report
 $SafeMembersReport = @()
 
 foreach ($Safe in $SafeList) {
     $SafeName = $Safe.safeName
     $SafeUrlId = $Safe.safeUrlId
     $SafeOwner = $Safe.safeOwner
+    $EncodedSafeId = [System.Web.HttpUtility]::UrlEncode($SafeUrlId)
 
-    Write-Host "🔍 Fetching members for safe: $SafeName..." -ForegroundColor Yellow
-    $MembersURL = "$BaseURL/Safes/$([System.Web.HttpUtility]::UrlEncode($SafeUrlId))/Members/"
+    Write-Host "`n➡️ Safe: $SafeName  (ID: $SafeUrlId)" -ForegroundColor Cyan
+    $MembersURL = "$BaseURL/Safes/$EncodedSafeId/Members/"
 
     try {
         $MembersResponse = Invoke-RestMethod -Uri $MembersURL -Method GET -Headers $Headers
+        $MemberCount = $MembersResponse.Members.Count
+        Write-Host "👥 Members in safe: $MemberCount" -ForegroundColor Yellow
+
+        if ($MemberCount -eq 0) {
+            Write-Host "⚠️  No visible members. May be due to permission limits." -ForegroundColor DarkYellow
+            continue
+        }
+
         foreach ($Member in $MembersResponse.Members) {
             $Perm = $Member.Permissions
 
@@ -88,16 +101,20 @@ foreach ($Safe in $SafeList) {
             }
         }
     } catch {
-        Write-Host "⚠️ Could not retrieve members for safe '$SafeName': $_" -ForegroundColor DarkYellow
+        Write-Host "❌ Error retrieving members for safe '$SafeName': $_" -ForegroundColor Red
     }
 }
 
-# Export to CSV
-$OutputFile = "CyberArk_SafeMembers_From_MembersAPI.csv"
-$SafeMembersReport | Export-Csv -Path $OutputFile -NoTypeInformation -Encoding UTF8
-Write-Host "✅ Report exported to: $OutputFile" -ForegroundColor Cyan
+# Export report if data exists
+$OutputFile = "CyberArk_SafeMembers_DebugReport.csv"
+if ($SafeMembersReport.Count -gt 0) {
+    $SafeMembersReport | Export-Csv -Path $OutputFile -NoTypeInformation -Encoding UTF8
+    Write-Host "`n✅ Report exported to: $OutputFile" -ForegroundColor Cyan
+} else {
+    Write-Host "`n❌ No safe members collected. Exiting." -ForegroundColor Red
+}
 
-# Logoff
+# Log off
 $LogoffURL = "$BaseURL/auth/Logoff"
 Invoke-RestMethod -Uri $LogoffURL -Method POST -Headers $Headers | Out-Null
-Write-Host "🔒 Logged out successfully." -ForegroundColor Gray
+Write-Host "🔒 Logged out." -ForegroundColor Gray
