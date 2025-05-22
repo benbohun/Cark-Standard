@@ -1,0 +1,41 @@
+# Path to the input CSV
+$csvPath = "C:\Path\To\Users.csv"
+
+# Import the CSV
+$users = Import-Csv -Path $csvPath
+
+# Initialize results array
+$results = @()
+
+foreach ($user in $users) {
+    $username = $user.sAMAccountName
+
+    try {
+        # Get AD user
+        $adUser = Get-ADUser -Identity $username -Properties Enabled
+
+        # Build result
+        $results += [PSCustomObject]@{
+            sAMAccountName = $username
+            Status         = if ($adUser.Enabled) { "Active" } else { "Disabled" }
+        }
+    }
+    catch {
+        # Handle user not found
+        $results += [PSCustomObject]@{
+            sAMAccountName = $username
+            Status         = "Not Found"
+        }
+    }
+}
+
+# Export results to CSV
+$results | Export-Csv -Path "C:\Path\To\AD_Account_Status_Report.csv" -NoTypeInformation
+
+Write-Host "✅ Report generated: AD_Account_Status_Report.csv"
+
+
+sAMAccountName
+jdoe
+asmith
+svc_backup
