@@ -1,0 +1,29 @@
+# 1. Authenticate
+Import-Module psPAS
+$UPCred = Get-Credential
+$header = Get-IdentityHeader -IdentityTenantURL "yourtenant.id.cyberark.cloud" `
+                             -psPASFormat -PCloudSubdomain "your-subdomain" -UPCreds $UPCred
+Use-PASSession $header
+
+# 2. Get all accounts
+$accounts = Get-PASAccount
+
+# 3. Filter accounts with dependencies (reconcile/logon/dependent)
+$dependentAccounts = foreach ($acct in $accounts) {
+    $acctDetails = Get-PASAccount -ID $acct.id
+    if ($acctDetails.logonAccountId -or $acctDetails.reconcileAccountId -or $acctDetails.dependencies) {
+        [PSCustomObject]@{
+            AccountID          = $acct.id
+            Name               = $acct.userName
+            Safe               = $acct.safeName
+            Address            = $acct.address
+            Platform           = $acct.platformId
+            ReconcileAccountID = $acctDetails.reconcileAccountId
+            LogonAccountID     = $acctDetails.logonAccountId
+            DependentCount     = ($acctDetails.dependencies | Measure-Object).Count
+        }
+    }
+}
+
+# 4. Export
+$dependentAccounts | Export-Csv -Path "CyberArk_AccountDependencies.csv" -NoTypeInformation
