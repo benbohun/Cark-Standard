@@ -33,3 +33,13 @@ foreach ($user in $users) {
 $results | Export-Csv -Path "C:\Path\To\AD_User_Status_Report.csv" -NoTypeInformation
 
 Write-Host "✅ Report generated: AD_User_Status_Report.csv"
+
+
+
+Team,
+ 
+The recently released CA25-21 involves a High severity vulnerability which has an impact of a Potential disclosure of sensitive information when connecting to a Linux target via PSM for SSH using the Remmina client.
+ 
+Am not sure if we leverage this clinet in-house but we will need to open a RITM to inquire from the SC team.
+ 
+Resolution to this is to use an SSH client other than Remmina, or disable the mechanism for requiring users to specify an access reason during login on the client.
