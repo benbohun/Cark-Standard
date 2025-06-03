@@ -1,0 +1,48 @@
+Set Offline
+
+# Define path to index.html and log file
+$IndexFilePath = "C:\inetpub\wwwroot\index.html"
+$LogFile = "C:\inetpub\wwwroot\CCPNodeStatus.log"
+
+# Define Offline HTML content
+$OfflineHTML = @"
+<html>
+<body>
+<p>Offline</p>
+</body>
+</html>
+"@
+
+# Write the Offline content
+$OfflineHTML | Set-Content -Path $IndexFilePath -Force
+
+# Log the change
+$Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+"[$Timestamp] Status set to OFFLINE" | Add-Content -Path $LogFile
+
+Write-Host "✔ CCP node status set to OFFLINE and logged."
+
+
+
+Set Online
+# Define path to index.html and log file
+$IndexFilePath = "C:\inetpub\wwwroot\index.html"
+$LogFile = "C:\inetpub\wwwroot\CCPNodeStatus.log"
+
+# Define Online HTML content
+$OnlineHTML = @"
+<html>
+<body>
+<p>Online</p>
+</body>
+</html>
+"@
+
+# Write the Online content
+$OnlineHTML | Set-Content -Path $IndexFilePath -Force
+
+# Log the change
+$Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+"[$Timestamp] Status set to ONLINE" | Add-Content -Path $LogFile
+
+Write-Host "✔ CCP node status set to ONLINE and logged."
