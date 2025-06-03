@@ -1,0 +1,50 @@
+🔷 Architecture Summary
+✅ Components:
+4 CCP Nodes
+
+2 located in HQ Chicago
+
+2 located in Dallas DR site
+
+F5 LTM Load Balancer with a dedicated VIP
+
+Exposed via DNS: aam.company.com
+
+Health Check Mechanism:
+
+F5 monitors each node by checking the content of an index.html file under the wwwroot directory on each CCP host.
+
+Admins manually toggle availability by editing this file to return Online or Offline.
+
+🔄 Traffic Flow Behavior
+Client Application connects to aam.company.com.
+
+F5 LTM resolves aam.company.com to the configured VIP.
+
+F5 evaluates the health check of each backend CCP node by reading its index.html.
+
+If index.html returns:
+
+Online → Node is considered healthy and included in load balancing.
+
+Offline → Node is marked unavailable, and traffic is not routed to it.
+
+Requests are load balanced across the available CCP nodes (Chicago and Dallas) using configured F5 logic (e.g., round-robin, least connections, etc.).
+
+🔧 Manual Node Maintenance
+When a CyberArk Admin needs to take a CCP node out of the VIP (e.g., for upgrade or patching):
+
+They access the node.
+
+Navigate to: C:\inetpub\wwwroot\index.html
+
+Change its contents to Offline.
+
+F5 will detect this in its next health check interval and stop forwarding traffic to that node.
+
+🏗️ Design Advantages
+Feature	Benefit
+Geographic node distribution (Chicago & Dallas)	High availability and DR support
+DNS VIP aam.company.com	Simplified client integration
+HTML-based node control	Simple, manual failover/maintenance process without F5 config changes
+F5 health monitoring	Dynamic node selection and failover
