@@ -46,3 +46,5 @@ $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 "[$Timestamp] Status set to ONLINE" | Add-Content -Path $LogFile
 
 Write-Host "✔ CCP node status set to ONLINE and logged."
+
+=IF(TODAY()-DATEVALUE(MID(B3,1,FIND(" ",B3)-1))<=365, "TRUE", "FALSE")
