@@ -1,0 +1,52 @@
+Field	Value
+Name	ccpalliant-https-healthcheck
+Type	https
+Interval	10 (seconds between checks)
+Timeout	31 (must be > 3 × interval)
+Send String	GET /AIMWebService/healthcheck.txt HTTP/1.1\r\nHost: aam.alliantcreditunion.com\r\nConnection: close\r\n\r\n
+Receive String	OK
+
+
+
+2. Navigate to Health Monitor Configuration
+•	Go to: Local Traffic > Monitors > Create
+3. Configure Monitor Settings
+•	Fill in the following fields:
+Field	Value
+Name	ccpalliant-https-healthcheck
+Type	https
+Interval	10 (seconds between checks)
+Timeout	31 (must be > 3 × interval)
+Send String	GET /AIMWebService/healthcheck.txt HTTP/1.1\r\nHost: aam.alliantcreditunion.com\r\nConnection: close\r\n\r\n
+Receive String	OK
+•	Tips:
+•	Host: aam.alliantcreditunion.com should match the VIP DNS name. 
+•	healthcheck.txt should contain just OK.
+•	If using self-signed or untrusted certificates on CCP, check “Ignore Certificate Errors” if available in your version.
+4. Save the Monitor
+•	Click Finished to save.
+5. Apply Monitor to CCP Pool
+•	Go to: Local Traffic > Pools >
+•	Click on the pool name.
+•	Under Health Monitors, click Add.
+•	Select your monitor ccp-https-healthcheck.
+•	Click Update.
+Test It
+•	In F5 UI, go to: Local Traffic > Pools >
+•	You’ll see status icons for each member:
+•	✅ Green → Healthy
+•	⚠️ Yellow → Transitional
+•	❌ Red → Down (health check failed)
+To simulate failure:
+•	Delete or rename healthcheck.txt on one CCP node.
+•	F5 will mark that node as DOWN.
+•	Restore the file to return it to UP.
+________________________________________
+Summary
+Step	Action
+Create HTTPS monitor	Sends GET /AIMWebService/healthcheck.txt
+Configure expected response	OK
+Apply to pool	Ensures F5 only routes to healthy nodes
+Test failover	Rename/delete file to simulate node failure
+Let me know if you need help with CLI (tmsh) configuration, setting up a monitor for a different port or protocol, or exporting/importing the monitor config.
+
