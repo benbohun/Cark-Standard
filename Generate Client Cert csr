@@ -1,11 +1,20 @@
-$infPath = "C:\Temp\CCP_ClientCert.inf"
+# Define paths
+$infPath = "C:\Temp\CyberArk_CCP_ClientCert.inf"
+$csrPath = "C:\Temp\CyberArk_CCP_ClientCert.req"
 
+# Make sure the Temp folder exists
+New-Item -ItemType Directory -Force -Path "C:\Temp" | Out-Null
+
+# Subject Details
+$subject = "CN=app1.target.cna.com, OU=Identity and Access Management, O=CNA FINANCIAL CORPORATION, L=Chicago, S=Illinois, C=US"
+
+# Create INF file content
 $infContent = @"
 [Version]
-Signature="$Windows NT$"
+Signature="\$Windows NT\$"
 
 [NewRequest]
-Subject = "CN=App1ClientCert"
+Subject = "$subject"
 KeySpec = 1
 KeyLength = 2048
 Exportable = TRUE
@@ -27,7 +36,11 @@ _continue_ = "1.3.6.1.5.5.7.3.2" ; Client Authentication EKU
 CertificateTemplate = User
 "@
 
+# Write INF content to file
 Set-Content -Path $infPath -Value $infContent
+
+Write-Host "✅ INF file created at: $infPath"
+
 
 :::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 $csrPath = "C:\Temp\App1ClientCert.req"
@@ -37,3 +50,75 @@ certreq -new $infPath $csrPath
 :::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 Test
 notepad $csrPath
+::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+
+
+
+
+
+
+
+
+
+
+
+
+# ===============================
+# CyberArk CCP Client Certificate CSR Generator (Interactive)
+# ===============================
+
+# Prompt for CN (FQDN)
+$CN = Read-Host "Enter the Common Name (CN) — typically the target application's FQDN (e.g., app1.target.cna.com)"
+
+# Define paths
+$TempFolder = "C:\Temp"
+$InfPath = Join-Path $TempFolder "CyberArk_CCP_ClientCert.inf"
+$CsrPath = Join-Path $TempFolder "CyberArk_CCP_ClientCert_$($CN -replace '[^\w]', '_').csr"
+
+# Ensure C:\Temp exists
+if (-Not (Test-Path $TempFolder)) {
+    New-Item -ItemType Directory -Path $TempFolder | Out-Null
+}
+
+# Define full subject with dynamic CN
+$Subject = "CN=$CN, OU=Identity and Access Management, O=CNA FINANCIAL CORPORATION, L=Chicago, S=Illinois, C=US"
+
+# INF file content
+$infContent = @"
+[Version]
+Signature="\$Windows NT\$"
+
+[NewRequest]
+Subject = "$Subject"
+KeySpec = 1
+KeyLength = 2048
+Exportable = TRUE
+MachineKeySet = TRUE
+SMIME = FALSE
+PrivateKeyArchive = FALSE
+UserProtected = FALSE
+UseExistingKeySet = FALSE
+ProviderName = "Microsoft RSA SChannel Cryptographic Provider"
+ProviderType = 12
+RequestType = PKCS10
+KeyUsage = 0xa0
+
+[Extensions]
+2.5.29.37 = "{text}"
+_continue_ = "1.3.6.1.5.5.7.3.2" ; Client Authentication EKU
+
+[RequestAttributes]
+CertificateTemplate = User
+"@
+
+# Write INF to file
+Set-Content -Path $InfPath -Value $infContent -Encoding ASCII
+Write-Host "✅ INF file created at: $InfPath"
+
+# Generate CSR
+certreq -new $InfPath $CsrPath
+Write-Host "`n✅ CSR successfully generated at: $CsrPath"
+
+# Open output folder
+Invoke-Item $TempFolder
