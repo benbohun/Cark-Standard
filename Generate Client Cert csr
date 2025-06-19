@@ -61,30 +61,21 @@ notepad $csrPath
 
 
 
-
-
-
 # ===============================
-# CyberArk CCP Client Certificate CSR Generator (Interactive)
+# CyberArk CCP Client Certificate CSR Generator (No Template)
 # ===============================
 
-# Prompt for CN (FQDN)
 $CN = Read-Host "Enter the Common Name (CN) — typically the target application's FQDN (e.g., app1.target.cna.com)"
-
-# Define paths
 $TempFolder = "C:\Temp"
 $InfPath = Join-Path $TempFolder "CyberArk_CCP_ClientCert.inf"
 $CsrPath = Join-Path $TempFolder "CyberArk_CCP_ClientCert_$($CN -replace '[^\w]', '_').csr"
 
-# Ensure C:\Temp exists
 if (-Not (Test-Path $TempFolder)) {
     New-Item -ItemType Directory -Path $TempFolder | Out-Null
 }
 
-# Define full subject with dynamic CN
 $Subject = "CN=$CN, OU=Identity and Access Management, O=CNA FINANCIAL CORPORATION, L=Chicago, S=Illinois, C=US"
 
-# INF file content
 $infContent = @"
 [Version]
 Signature="\$Windows NT\$"
@@ -107,18 +98,12 @@ KeyUsage = 0xa0
 [Extensions]
 2.5.29.37 = "{text}"
 _continue_ = "1.3.6.1.5.5.7.3.2" ; Client Authentication EKU
-
-[RequestAttributes]
-CertificateTemplate = User
 "@
 
-# Write INF to file
 Set-Content -Path $InfPath -Value $infContent -Encoding ASCII
 Write-Host "✅ INF file created at: $InfPath"
 
-# Generate CSR
 certreq -new $InfPath $CsrPath
 Write-Host "`n✅ CSR successfully generated at: $CsrPath"
-
-# Open output folder
 Invoke-Item $TempFolder
+
