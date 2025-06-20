@@ -107,3 +107,75 @@ certreq -new $InfPath $CsrPath
 Write-Host "`n✅ CSR successfully generated at: $CsrPath"
 Invoke-Item $TempFolder
 
+
+
+
+
+
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <configSections>
+    <section name="log4net" type="log4net.Config.Log4NetConfigurationSectionHandler, log4net" requirePermission="false" />
+  </configSections>
+
+  <log4net>
+    <appender name="RollingLogFileAppender" type="log4net.Appender.RollingFileAppender">
+      <file type="log4net.Util.PatternString" value="logs\AIMWSTrace.log" />
+      <appendToFile value="true" />
+      <staticLogFileName value="true" />
+      <rollingStyle value="Size" />
+      <param name="DatePattern" value="dd.MM.yyyy'.log'" />
+      <preserveLogFileNameExtension value="true" />
+      <maxSizeRollBackups value="25" />
+      <maximumFileSize value="10MB" />
+      <layout type="log4net.Layout.PatternLayout">
+        <conversionPattern value="%date | Request %message%newline" />
+      </layout>
+    </appender>
+    <root>
+      <level value="INFO" />
+      <appender-ref ref="RollingLogFileAppender" />
+    </root>
+  </log4net>
+
+  <appSettings>
+    <add key="AppID" value="AIMWebService" />
+    <add key="TrustedProxies" value="10.12.4.5, 10.12.4.20"/>
+  </appSettings>
+
+  <connectionStrings />
+
+  <system.web>
+    <httpRuntime enableVersionHeader="false" />
+    <compilation debug="true" targetFramework="4.8" />
+    <authentication mode="Windows" />
+    <pages controlRenderingCompatibilityVersion="4.8" clientIDMode="AutoID" />
+  </system.web>
+
+  <system.webServer>
+    <!-- Required for client certificate authentication -->
+    <security>
+      <access sslFlags="Ssl,SslNegotiateCert" />
+    </security>
+
+    <httpProtocol>
+      <customHeaders>
+        <remove name="X-Powered-By" />
+      </customHeaders>
+    </httpProtocol>
+
+    <handlers>
+      <remove name="OPTIONSVerbHandler" />
+      <remove name="TRACEVerbHandler" />
+    </handlers>
+
+    <directoryBrowse enabled="false" />
+    <defaultDocument>
+      <files>
+        <add value="healthcheck.html" />
+      </files>
+    </defaultDocument>
+  </system.webServer>
+
+  <system.serviceModel />
+</configuration>
