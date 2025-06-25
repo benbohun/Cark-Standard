@@ -58,8 +58,6 @@ if ($Results) {
     Write-Host "`nNo events found for account '$User' in the last 24 hours." -ForegroundColor Yellow
 }
 :::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
-# PowerShell Script: List all AD account lockouts in last 24 hours (local or remote DC)
-
 Write-Host "------------------------------------------------------" -ForegroundColor Cyan
 Write-Host "      Active Directory Account Lockouts (24 Hours)" -ForegroundColor Cyan
 Write-Host "------------------------------------------------------" -ForegroundColor Cyan
@@ -69,13 +67,13 @@ Write-Host ""
 $DC = Read-Host "Enter the Domain Controller name to query (leave blank for local machine)"
 if ([string]::IsNullOrWhiteSpace($DC)) {
     $DC = $env:COMPUTERNAME
-    Write-Host "No DC entered. Using local machine: $DC" -ForegroundColor Yellow
+    Write-Host ("No DC entered. Using local machine: {0}" -f $DC) -ForegroundColor Yellow
 } else {
-    Write-Host "Using Domain Controller: $DC" -ForegroundColor Yellow
+    Write-Host ("Using Domain Controller: {0}" -f $DC) -ForegroundColor Yellow
 }
 
 $StartTime = (Get-Date).AddHours(-24)
-Write-Host "Scanning Security event logs for lockout events since $StartTime ..." -ForegroundColor Yellow
+Write-Host ("Scanning Security event logs for lockout events since {0} ..." -f $StartTime) -ForegroundColor Yellow
 
 try {
     $Events = Get-WinEvent -ComputerName $DC -FilterHashtable @{
@@ -108,19 +106,8 @@ $Results = foreach ($Event in $Events) {
     }
 }
 
-Write-Host "`n🚨 $($Results.Count) account lockout(s) detected in the last 24 hours on $DC:" -ForegroundColor Red
+Write-Host ("`n🚨 {0} account lockout(s) detected in the last 24 hours on {1}:" -f $Results.Count, $DC) -ForegroundColor Red
 $Results | Sort-Object Time | Format-Table Time, UserName, SourceWorkstation, DomainController -AutoSize
 
 Write-Host "`n✅ Script complete." -ForegroundColor Green
 Write-Host "------------------------------------------------------" -ForegroundColor Cyan
-
-# Optional: Export to CSV
-# $Results | Export-Csv -Path "$env:USERPROFILE\Desktop\AD_Lockouts_Last24Hrs_$DC.csv" -NoTypeInformation
-# Write-Host "Results exported to your Desktop as 'AD_Lockouts_Last24Hrs_$DC.csv'"
-
-At line:51 char:88
-+ ... unt) account lockout(s) detected in the last 24 hours on $DC:" -Foreg ...
-+                                                              ~~~~
-Variable reference is not valid. ':' was not followed by a valid variable name character. Consider using ${} to delimit the name.
-    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
-    + FullyQualifiedErrorId : InvalidVariableReferenceWithDrive
