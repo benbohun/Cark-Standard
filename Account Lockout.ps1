@@ -57,3 +57,54 @@ if ($Results) {
 } else {
     Write-Host "`nNo events found for account '$User' in the last 24 hours." -ForegroundColor Yellow
 }
+:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# PowerShell Script: List all AD account lockouts in last 24 hours
+
+Write-Host "------------------------------------------------------" -ForegroundColor Cyan
+Write-Host "      Active Directory Account Lockouts (24 Hours)" -ForegroundColor Cyan
+Write-Host "------------------------------------------------------" -ForegroundColor Cyan
+Write-Host ""
+
+$StartTime = (Get-Date).AddHours(-24)
+Write-Host "Scanning Security event logs for lockout events since $StartTime ..." -ForegroundColor Yellow
+
+try {
+    $Events = Get-WinEvent -FilterHashtable @{
+        LogName = 'Security'
+        ID      = 4740
+        StartTime = $StartTime
+    } -ErrorAction Stop
+}
+catch {
+    Write-Host "Error: Unable to read Security event log. Please run as Administrator on a Domain Controller." -ForegroundColor Red
+    return
+}
+
+if (!$Events -or $Events.Count -eq 0) {
+    Write-Host "`n✅ No account lockouts detected in the last 24 hours." -ForegroundColor Green
+    return
+}
+
+Write-Host "`n🔍 Processing events..." -ForegroundColor Yellow
+
+$Results = foreach ($Event in $Events) {
+    $Xml = [xml]$Event.ToXml()
+    $EventData = $Xml.Event.EventData.Data
+
+    [PSCustomObject]@{
+        Time             = $Event.TimeCreated
+        UserName         = $EventData | Where-Object { $_.Name -eq "TargetUserName" } | Select-Object -ExpandProperty '#text'
+        SourceWorkstation= $EventData | Where-Object { $_.Name -eq "WorkstationName" } | Select-Object -ExpandProperty '#text'
+        DomainController = $Event.MachineName
+    }
+}
+
+Write-Host "`n🚨 $($Results.Count) account lockout(s) detected in the last 24 hours:" -ForegroundColor Red
+$Results | Sort-Object Time | Format-Table Time, UserName, SourceWorkstation, DomainController -AutoSize
+
+Write-Host "`n✅ Script complete." -ForegroundColor Green
+Write-Host "------------------------------------------------------" -ForegroundColor Cyan
+
+# Optional: Export to CSV
+# $Results | Export-Csv -Path "$env:USERPROFILE\Desktop\AD_Lockouts_Last24Hrs.csv" -NoTypeInformation
+# Write-Host "Results exported to your Desktop as 'AD_Lockouts_Last24Hrs.csv'"
