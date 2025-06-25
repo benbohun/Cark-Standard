@@ -117,3 +117,10 @@ Write-Host "------------------------------------------------------" -ForegroundC
 # Optional: Export to CSV
 # $Results | Export-Csv -Path "$env:USERPROFILE\Desktop\AD_Lockouts_Last24Hrs_$DC.csv" -NoTypeInformation
 # Write-Host "Results exported to your Desktop as 'AD_Lockouts_Last24Hrs_$DC.csv'"
+
+At line:51 char:88
++ ... unt) account lockout(s) detected in the last 24 hours on $DC:" -Foreg ...
++                                                              ~~~~
+Variable reference is not valid. ':' was not followed by a valid variable name character. Consider using ${} to delimit the name.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : InvalidVariableReferenceWithDrive
