@@ -58,30 +58,39 @@ if ($Results) {
     Write-Host "`nNo events found for account '$User' in the last 24 hours." -ForegroundColor Yellow
 }
 :::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
-# PowerShell Script: List all AD account lockouts in last 24 hours
+# PowerShell Script: List all AD account lockouts in last 24 hours (local or remote DC)
 
 Write-Host "------------------------------------------------------" -ForegroundColor Cyan
 Write-Host "      Active Directory Account Lockouts (24 Hours)" -ForegroundColor Cyan
 Write-Host "------------------------------------------------------" -ForegroundColor Cyan
 Write-Host ""
 
+# Prompt for DC, default to local if blank
+$DC = Read-Host "Enter the Domain Controller name to query (leave blank for local machine)"
+if ([string]::IsNullOrWhiteSpace($DC)) {
+    $DC = $env:COMPUTERNAME
+    Write-Host "No DC entered. Using local machine: $DC" -ForegroundColor Yellow
+} else {
+    Write-Host "Using Domain Controller: $DC" -ForegroundColor Yellow
+}
+
 $StartTime = (Get-Date).AddHours(-24)
 Write-Host "Scanning Security event logs for lockout events since $StartTime ..." -ForegroundColor Yellow
 
 try {
-    $Events = Get-WinEvent -FilterHashtable @{
+    $Events = Get-WinEvent -ComputerName $DC -FilterHashtable @{
         LogName = 'Security'
         ID      = 4740
         StartTime = $StartTime
     } -ErrorAction Stop
 }
 catch {
-    Write-Host "Error: Unable to read Security event log. Please run as Administrator on a Domain Controller." -ForegroundColor Red
+    Write-Host "Error: Unable to read Security event log on $DC. Please ensure your account has 'Event Log Readers' rights on this DC." -ForegroundColor Red
     return
 }
 
 if (!$Events -or $Events.Count -eq 0) {
-    Write-Host "`n✅ No account lockouts detected in the last 24 hours." -ForegroundColor Green
+    Write-Host "`n✅ No account lockouts detected in the last 24 hours on $DC." -ForegroundColor Green
     return
 }
 
@@ -99,12 +108,12 @@ $Results = foreach ($Event in $Events) {
     }
 }
 
-Write-Host "`n🚨 $($Results.Count) account lockout(s) detected in the last 24 hours:" -ForegroundColor Red
+Write-Host "`n🚨 $($Results.Count) account lockout(s) detected in the last 24 hours on $DC:" -ForegroundColor Red
 $Results | Sort-Object Time | Format-Table Time, UserName, SourceWorkstation, DomainController -AutoSize
 
 Write-Host "`n✅ Script complete." -ForegroundColor Green
 Write-Host "------------------------------------------------------" -ForegroundColor Cyan
 
 # Optional: Export to CSV
-# $Results | Export-Csv -Path "$env:USERPROFILE\Desktop\AD_Lockouts_Last24Hrs.csv" -NoTypeInformation
-# Write-Host "Results exported to your Desktop as 'AD_Lockouts_Last24Hrs.csv'"
+# $Results | Export-Csv -Path "$env:USERPROFILE\Desktop\AD_Lockouts_Last24Hrs_$DC.csv" -NoTypeInformation
+# Write-Host "Results exported to your Desktop as 'AD_Lockouts_Last24Hrs_$DC.csv'"
