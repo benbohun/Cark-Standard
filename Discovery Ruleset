@@ -1,0 +1,61 @@
+{
+  "name": "Local BuiltIn Admins",
+  "trigger": {
+    "type": "ACCOUNT_DISCOVERED",
+    "entityType": "DISCOVERED_ACCOUNT",
+    "conditions": [
+      {
+        "property": "type",
+        "propertyType": "STRING",
+        "operator": "EQUALS",
+        "value": "Local"
+      },
+      {
+        "property": "isPrivileged",
+        "propertyType": "BOOLEAN",
+        "operator": "EQUALS",
+        "value": "true"
+      },
+      {
+        "property": "currentState",
+        "propertyType": "STRING",
+        "operator": "EQUALS",
+        "value": "Enabled"
+      }
+    ]
+  },
+  "rules": [
+    {
+      "name": "Onboard Built-in Admins",
+      "conditions": [
+        {
+          "property": "source",
+          "propertyType": "STRING",
+          "operator": "EQUALS",
+          "value": "discovery-scans"
+        },
+        {
+          "property": "subType",
+          "propertyType": "STRING",
+          "operator": "EQUALS",
+          "value": "local"
+        },
+        {
+          "property": "sid",
+          "propertyType": "STRING",
+          "operator": "ENDS_WITH",
+          "value": "-500"
+        }
+      ],
+      "action": {
+        "type": "ONBOARD",
+        "parameters": {
+          "platformId": "PRD_WINLOC_Admin_Srv_CNA",
+          "safeName": "CCP_DEMO_SAFE"
+        },
+        "subActions": []
+      }
+    }
+  ],
+  "status": "ACTIVE"
+}
