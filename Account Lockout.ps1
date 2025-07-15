@@ -1,7 +1,6 @@
 <#
 .SYNOPSIS
-    Export CyberArk PAS accounts with all extended properties to CSV, including Logon and Reconcile account (raw value).
-    Only for user CAG1896a.
+    Export CyberArk PAS accounts for user CAG1896a, with all extended properties to CSV (including Logon and Reconcile account if present).
 #>
 
 param (
@@ -70,7 +69,6 @@ foreach ($acct in $accounts) {
             $safeInfo = $safesht[$details.safeName]
         }
 
-        # Raw property extraction for logon and reconcile account
         $logonAccount = $null
         $reconcileAccount = $null
         if ($details.platformAccountProperties) {
