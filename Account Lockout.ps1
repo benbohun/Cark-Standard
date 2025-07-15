@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Export CyberArk PAS accounts for user CAG1896a, with all extended properties to CSV (including Logon and Reconcile account if present).
+    Export CyberArk PAS accounts for user CAG1896a, with all extended properties to CSV (optimized: only fetch required safes/platforms).
 #>
 
 param (
@@ -22,15 +22,7 @@ $header = Get-IdentityHeader -IdentityTenantURL "aat4012.id.cyberark.cloud" -psP
 Use-PASSession $header
 Write-Host "Authentication successful!" -ForegroundColor Green
 
-Write-Host "Fetching platforms and safes..." -ForegroundColor Cyan
-$platforms = Get-PASPlatform
-$safes = Get-PASSafe
-
-$platformsht = @{}
-$platforms | ForEach-Object { $platformsht[$_.PlatformID] = $_ }
-$safesht = @{}
-$safes | ForEach-Object { $safesht[$_.SafeName] = $_ }
-
+# Step 1: Fetch only accounts for the target user
 Write-Host "Fetching CyberArk accounts for CAG1896a..." -ForegroundColor Cyan
 $accounts = Get-PASAccount | Where-Object { $_.userName -ieq 'CAG1896a' }
 
@@ -38,6 +30,28 @@ if (!$accounts -or $accounts.Count -eq 0) {
     Write-Warning "No accounts found for user CAG1896a! Please check the username, connection, or permissions."
     exit
 }
+
+# Step 2: Get only needed platform IDs and safe names
+$neededPlatformIds = $accounts | Select-Object -ExpandProperty platformId -Unique
+$neededSafeNames   = $accounts | Select-Object -ExpandProperty safeName   -Unique
+
+# Step 3: Fetch only those safes and platforms
+Write-Host "Fetching referenced platforms and safes..." -ForegroundColor Cyan
+$platforms = @()
+foreach ($pid in $neededPlatformIds) {
+    $p = Get-PASPlatform -PlatformID $pid -ErrorAction SilentlyContinue
+    if ($p) { $platforms += $p }
+}
+$safes = @()
+foreach ($sname in $neededSafeNames) {
+    $s = Get-PASSafe -SafeName $sname -ErrorAction SilentlyContinue
+    if ($s) { $safes += $s }
+}
+
+$platformsht = @{}
+$platforms | ForEach-Object { $platformsht[$_.PlatformID] = $_ }
+$safesht = @{}
+$safes | ForEach-Object { $safesht[$_.SafeName] = $_ }
 
 $report = @()
 
@@ -144,6 +158,7 @@ try {
 } catch {
     Write-Error "Failed to export report to $ReportPath. $_"
 }
+
 
 ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 # Prompt for the account name (SAMAccountName, e.g., jdoe)
