@@ -25,152 +25,7 @@ Write-Output "PAS accounts have been exported to: $exportPath"
 ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 <#
 .SYNOPSIS
-    Export CyberArk PAS accounts with all extended properties to CSV.
-.DESCRIPTION
-    Mirrors the logic of CyberArk's Get-AccountReport.ps1.
-    Includes all workflow, policy, machine restriction, CPM, and custom properties.
-.NOTES
-    Requires psPAS PowerShell module and CyberArk API access.
-#>
-
-# Parameters
-param (
-    [Parameter(Mandatory = $false)]
-    [string]$ReportPath = "PASAccounts_ExtendedReport.csv"
-)
-
-# Import psPAS module (install if not present)
-if (!(Get-Module -ListAvailable -Name psPAS)) {
-    Install-Module psPAS -Scope CurrentUser -Force
-}
-Import-Module psPAS
-
-# Connect (update with your tenant details)
-$UPCred = Get-Credential
-$header = Get-IdentityHeader -IdentityTenantURL "aat4012.id.cyberark.cloud" -psPASFormat -PCloudSubdomain "cna-prod" -UPCreds $UPCred
-Use-PASSession $header
-
-# Fetch platforms and safes (for workflow/policy info)
-$platforms = Get-PASPlatform
-$safes = Get-PASSafe
-
-# Build lookup hashtables
-$platformsht = @{}
-$platforms | ForEach-Object { $platformsht[$_.PlatformID] = $_ }
-$safesht = @{}
-$safes | ForEach-Object { $safesht[$_.SafeName] = $_ }
-
-# Fetch all accounts
-$accounts = Get-PASAccount
-
-# Prepare array for report
-$report = @()
-
-# Get all custom properties present in platformAccountProperties (union of all accounts)
-$importedPropsList = @()
-foreach ($acct in $accounts) {
-    if ($acct.platformAccountProperties) {
-        $importedPropsList += $acct.platformAccountProperties.PSObject.Properties.Name
-    }
-}
-$importedPropsList = $importedPropsList | Select-Object -Unique
-
-# For each account, fetch full details and extended/workflow/custom properties
-foreach ($acct in $accounts) {
-    try {
-        $details = Get-PASAccount -id $acct.id
-
-        # Workflow/Policy/CPM details
-        $platformInfo = $null
-        if ($details.platformId -and $platformsht.ContainsKey($details.platformId)) {
-            $platformInfo = $platformsht[$details.platformId]
-        }
-        $safeInfo = $null
-        if ($details.safeName -and $safesht.ContainsKey($details.safeName)) {
-            $safeInfo = $safesht[$details.safeName]
-        }
-
-        # Custom property extraction
-        $customProps = @{}
-        foreach ($p in $importedPropsList) {
-            $customProps[$p] = $null
-            if ($details.platformAccountProperties -and $details.platformAccountProperties.$p) {
-                $customProps[$p] = $details.platformAccountProperties.$p
-            }
-        }
-
-        # Compose output object (add or remove fields as needed)
-        $reportObj = [PSCustomObject]@{
-            id                       = $details.id
-            SafeName                 = $details.safeName
-            PlatformID               = $details.platformId
-            PlatformName             = $platformInfo.Details.Name
-            Name                     = $details.name
-            Address                  = $details.address
-            UserName                 = $details.userName
-            SecretType               = $details.secretType
-            SecretStatus             = $details.secretManagement.Status
-            AccountManaged           = $details.secretManagement.automaticManagementEnabled
-            ManualManagementReason   = $details.secretManagement.manualManagementReason
-            ManagingCPM              = $safeInfo.ManagingCPM
-            CreatedTime              = $details.createdTime
-            CategoryModificationTime = $details.categoryModificationTime
-
-            # Machine Restriction
-            RestrictedToSpecificMachines = $details.remoteMachinesAccess.accessRestrictedToRemoteMachines
-            RemoteMachines               = $details.remoteMachinesAccess.remoteMachines
-
-            # Workflow/Policy
-            DualControl   = $platformInfo.Details.PrivilegedAccessWorkflows.RequireDualControlPasswordAccessApproval.IsActive
-            ExclusiveUse  = $platformInfo.Details.PrivilegedAccessWorkflows.EnforceCheckinCheckoutExclusiveAccess.IsActive
-            OneTime       = $platformInfo.Details.PrivilegedAccessWorkflows.EnforceOnetimePasswordAccess.IsActive
-            RequireReason = $platformInfo.Details.PrivilegedAccessWorkflows.RequireUsersToSpecifyReasonForAccess.IsActive
-
-            # Change Policy
-            ChangeManual     = $platformInfo.Details.CredentialsManagementPolicy.Change.AllowManual
-            ChangeOnAdd      = $platformInfo.Details.CredentialsManagementPolicy.Change.AutoOnAdd
-            ChangeAuto       = $platformInfo.Details.CredentialsManagementPolicy.Change.PerformAutomatic
-            ChangeDays       = $platformInfo.Details.CredentialsManagementPolicy.Change.RequirePasswordEveryXDays
-            ChangeLast       = if ($details.secretManagement.lastModifiedTime) { (Get-Date -Date "01-01-1970").AddSeconds([double]$details.secretManagement.lastModifiedTime) } else { $null }
-            ChangeNext       = if ($details.secretManagement.lastModifiedTime -and $platformInfo.Details.CredentialsManagementPolicy.Change.RequirePasswordEveryXDays) { (Get-Date -Date "01-01-1970").AddSeconds([double]$details.secretManagement.lastModifiedTime).AddDays($platformInfo.Details.CredentialsManagementPolicy.Change.RequirePasswordEveryXDays) } else { $null }
-            ChangeInReset    = $platformInfo.Details.CredentialsManagementPolicy.SecretUpdateConfiguration.ChangePasswordInResetMode
-
-            # Verification Policy
-            VerifyManual = $platformInfo.Details.CredentialsManagementPolicy.Verification.AllowManual
-            VerifyOnAdd  = $platformInfo.Details.CredentialsManagementPolicy.Verification.AutoOnAdd
-            VerifyAuto   = $platformInfo.Details.CredentialsManagementPolicy.Verification.PerformAutomatic
-            VerifyDays   = $platformInfo.Details.CredentialsManagementPolicy.Verification.RequirePasswordEveryXDays
-            VerifyLast   = if ($details.secretManagement.lastVerifiedTime) { (Get-Date -Date "01-01-1970").AddSeconds([double]$details.secretManagement.lastVerifiedTime) } else { $null }
-            VerifyNext   = if ($details.secretManagement.lastVerifiedTime -and $platformInfo.Details.CredentialsManagementPolicy.Verification.RequirePasswordEveryXDays) { (Get-Date -Date "01-01-1970").AddSeconds([double]$details.secretManagement.lastVerifiedTime).AddDays($platformInfo.Details.CredentialsManagementPolicy.Verification.RequirePasswordEveryXDays) } else { $null }
-
-            # Reconcile Policy
-            ReconcileManual = $platformInfo.Details.CredentialsManagementPolicy.Reconcile.AllowManual
-            ReconcileUnSync = $platformInfo.Details.CredentialsManagementPolicy.Reconcile.AutomaticReconcileWhenUnsynced
-
-            # Name (redundant)
-            ObjectName = $details.name
-        }
-
-        # Add all custom properties (logon, reconcile, dependencies, annotations, etc)
-        foreach ($k in $importedPropsList) {
-            $reportObj | Add-Member -MemberType NoteProperty -Name $k -Value $customProps[$k] -Force
-        }
-
-        $report += $reportObj
-    } catch {
-        Write-Warning "Failed to process account: $($acct.id)"
-    }
-}
-
-# Export to CSV
-$report | Export-Csv -NoTypeInformation -Path $ReportPath
-
-Write-Output "Full extended CyberArk account report exported to: $ReportPath"
-
-:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
-<#
-.SYNOPSIS
-    Export CyberArk PAS accounts with all extended properties to CSV, with clear feedback.
+    Export CyberArk PAS accounts with all extended properties to CSV, simply adding Logon and Reconcile account values as columns (raw, no lookup).
 #>
 
 param (
@@ -178,24 +33,20 @@ param (
     [string]$ReportPath = "PASAccounts_ExtendedReport.csv"
 )
 
-# Show all errors immediately
 $ErrorActionPreference = "Stop"
 
-# Import psPAS module (install if not present)
 if (!(Get-Module -ListAvailable -Name psPAS)) {
     Write-Host "psPAS module not found, installing..." -ForegroundColor Yellow
     Install-Module psPAS -Scope CurrentUser -Force
 }
 Import-Module psPAS
 
-# Connect to CyberArk (update with your tenant details)
 $UPCred = Get-Credential
 Write-Host "Connecting to CyberArk..." -ForegroundColor Cyan
 $header = Get-IdentityHeader -IdentityTenantURL "aat4012.id.cyberark.cloud" -psPASFormat -PCloudSubdomain "cna-prod" -UPCreds $UPCred
 Use-PASSession $header
 Write-Host "Authentication successful!" -ForegroundColor Green
 
-# Fetch platforms and safes (for workflow/policy info)
 Write-Host "Fetching platforms and safes..." -ForegroundColor Cyan
 $platforms = Get-PASPlatform
 $safes = Get-PASSafe
@@ -205,7 +56,6 @@ $platforms | ForEach-Object { $platformsht[$_.PlatformID] = $_ }
 $safesht = @{}
 $safes | ForEach-Object { $safesht[$_.SafeName] = $_ }
 
-# Fetch all accounts
 Write-Host "Fetching CyberArk accounts..." -ForegroundColor Cyan
 $accounts = Get-PASAccount
 
@@ -214,7 +64,6 @@ if (!$accounts -or $accounts.Count -eq 0) {
     exit
 }
 
-# Prepare array for report
 $report = @()
 
 # Collect all custom/imported property names
@@ -226,7 +75,6 @@ foreach ($acct in $accounts) {
 }
 $importedPropsList = $importedPropsList | Select-Object -Unique
 
-# Process accounts with visible progress
 $counter = 0
 $total = $accounts.Count
 
@@ -246,7 +94,16 @@ foreach ($acct in $accounts) {
             $safeInfo = $safesht[$details.safeName]
         }
 
-        # Custom property extraction
+        # Simple raw property extraction for logon and reconcile account
+        $logonAccount = $null
+        $reconcileAccount = $null
+        if ($details.platformAccountProperties) {
+            $logonAccount = $details.platformAccountProperties['LogonAccount']
+            if (-not $logonAccount) { $logonAccount = $details.platformAccountProperties['Logon Account'] }
+            $reconcileAccount = $details.platformAccountProperties['ReconcileAccount']
+            if (-not $reconcileAccount) { $reconcileAccount = $details.platformAccountProperties['Reconcile Account'] }
+        }
+
         $customProps = @{}
         foreach ($p in $importedPropsList) {
             $customProps[$p] = $null
@@ -292,6 +149,8 @@ foreach ($acct in $accounts) {
             ReconcileManual = $platformInfo.Details.CredentialsManagementPolicy.Reconcile.AllowManual
             ReconcileUnSync = $platformInfo.Details.CredentialsManagementPolicy.Reconcile.AutomaticReconcileWhenUnsynced
             ObjectName = $details.name
+            LogonAccount = $logonAccount
+            ReconcileAccount = $reconcileAccount
         }
 
         foreach ($k in $importedPropsList) {
@@ -305,11 +164,11 @@ foreach ($acct in $accounts) {
     }
 }
 
-# Export report
 try {
     $report | Export-Csv -NoTypeInformation -Path $ReportPath
     Write-Host "`nFull extended CyberArk account report exported to: $ReportPath" -ForegroundColor Green
 } catch {
     Write-Error "Failed to export report to $ReportPath. $_"
 }
+
 
