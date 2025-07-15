@@ -1,0 +1,24 @@
+# Import psPAS Module
+Import-Module psPAS
+
+# Prompt user for CyberArk credentials
+$UPCred = Get-Credential
+
+# Get header authentication (PCLOUD Admins Only)
+$header = Get-IdentityHeader -IdentityTenantURL "aat4012.id.cyberark.cloud" -psPASFormat -PCloudSubdomain "cna-prod" -UPCreds $UPCred
+
+# Register to use header credentials for PAS session
+Use-PASSession $header
+
+# Fetch all PAS accounts
+$PASAccounts = Get-PASAccount
+
+# Define CSV export path
+$exportPath = "E:\Installation Media\RemovePendingAccount\PASAccounts.csv"
+
+# Select required fields and export to CSV
+$PASAccounts | Select-Object id, safeName, address, userName, name, platformId, secretType, platformAccountProperties, secretManagement, createdTime, categoryModificationTime |
+Export-Csv -Path $exportPath -NoTypeInformation
+
+# Output completion message
+Write-Output "PAS accounts have been exported to: $exportPath"
