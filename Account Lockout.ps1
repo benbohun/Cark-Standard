@@ -1,3 +1,153 @@
+<#
+.SYNOPSIS
+    Export CyberArk PAS accounts with all extended properties to CSV, including Logon and Reconcile account (raw value).
+    Only for user CAG1896a.
+#>
+
+param (
+    [Parameter(Mandatory = $false)]
+    [string]$ReportPath = "PASAccounts_CAG1896a_ExtendedReport.csv"
+)
+
+$ErrorActionPreference = "Stop"
+
+if (!(Get-Module -ListAvailable -Name psPAS)) {
+    Write-Host "psPAS module not found, installing..." -ForegroundColor Yellow
+    Install-Module psPAS -Scope CurrentUser -Force
+}
+Import-Module psPAS
+
+$UPCred = Get-Credential
+Write-Host "Connecting to CyberArk..." -ForegroundColor Cyan
+$header = Get-IdentityHeader -IdentityTenantURL "aat4012.id.cyberark.cloud" -psPASFormat -PCloudSubdomain "cna-prod" -UPCreds $UPCred
+Use-PASSession $header
+Write-Host "Authentication successful!" -ForegroundColor Green
+
+Write-Host "Fetching platforms and safes..." -ForegroundColor Cyan
+$platforms = Get-PASPlatform
+$safes = Get-PASSafe
+
+$platformsht = @{}
+$platforms | ForEach-Object { $platformsht[$_.PlatformID] = $_ }
+$safesht = @{}
+$safes | ForEach-Object { $safesht[$_.SafeName] = $_ }
+
+Write-Host "Fetching CyberArk accounts for CAG1896a..." -ForegroundColor Cyan
+$accounts = Get-PASAccount | Where-Object { $_.userName -ieq 'CAG1896a' }
+
+if (!$accounts -or $accounts.Count -eq 0) {
+    Write-Warning "No accounts found for user CAG1896a! Please check the username, connection, or permissions."
+    exit
+}
+
+$report = @()
+
+# Collect all custom/imported property names
+$importedPropsList = @()
+foreach ($acct in $accounts) {
+    if ($acct.platformAccountProperties) {
+        $importedPropsList += $acct.platformAccountProperties.PSObject.Properties.Name
+    }
+}
+$importedPropsList = $importedPropsList | Select-Object -Unique
+
+$counter = 0
+$total = $accounts.Count
+
+foreach ($acct in $accounts) {
+    $counter++
+    Write-Progress -Activity "Processing accounts..." -Status "$counter of $total" -PercentComplete (($counter/$total)*100)
+
+    try {
+        $details = Get-PASAccount -id $acct.id
+
+        $platformInfo = $null
+        if ($details.platformId -and $platformsht.ContainsKey($details.platformId)) {
+            $platformInfo = $platformsht[$details.platformId]
+        }
+        $safeInfo = $null
+        if ($details.safeName -and $safesht.ContainsKey($details.safeName)) {
+            $safeInfo = $safesht[$details.safeName]
+        }
+
+        # Raw property extraction for logon and reconcile account
+        $logonAccount = $null
+        $reconcileAccount = $null
+        if ($details.platformAccountProperties) {
+            $logonAccount = $details.platformAccountProperties['LogonAccount']
+            if (-not $logonAccount) { $logonAccount = $details.platformAccountProperties['Logon Account'] }
+            $reconcileAccount = $details.platformAccountProperties['ReconcileAccount']
+            if (-not $reconcileAccount) { $reconcileAccount = $details.platformAccountProperties['Reconcile Account'] }
+        }
+
+        $customProps = @{}
+        foreach ($p in $importedPropsList) {
+            $customProps[$p] = $null
+            if ($details.platformAccountProperties -and $details.platformAccountProperties.$p) {
+                $customProps[$p] = $details.platformAccountProperties.$p
+            }
+        }
+
+        $reportObj = [PSCustomObject]@{
+            id                       = $details.id
+            SafeName                 = $details.safeName
+            PlatformID               = $details.platformId
+            PlatformName             = $platformInfo.Details.Name
+            Name                     = $details.name
+            Address                  = $details.address
+            UserName                 = $details.userName
+            SecretType               = $details.secretType
+            SecretStatus             = $details.secretManagement.Status
+            AccountManaged           = $details.secretManagement.automaticManagementEnabled
+            ManualManagementReason   = $details.secretManagement.manualManagementReason
+            ManagingCPM              = $safeInfo.ManagingCPM
+            CreatedTime              = $details.createdTime
+            CategoryModificationTime = $details.categoryModificationTime
+            RestrictedToSpecificMachines = $details.remoteMachinesAccess.accessRestrictedToRemoteMachines
+            RemoteMachines               = $details.remoteMachinesAccess.remoteMachines
+            DualControl   = $platformInfo.Details.PrivilegedAccessWorkflows.RequireDualControlPasswordAccessApproval.IsActive
+            ExclusiveUse  = $platformInfo.Details.PrivilegedAccessWorkflows.EnforceCheckinCheckoutExclusiveAccess.IsActive
+            OneTime       = $platformInfo.Details.PrivilegedAccessWorkflows.EnforceOnetimePasswordAccess.IsActive
+            RequireReason = $platformInfo.Details.PrivilegedAccessWorkflows.RequireUsersToSpecifyReasonForAccess.IsActive
+            ChangeManual     = $platformInfo.Details.CredentialsManagementPolicy.Change.AllowManual
+            ChangeOnAdd      = $platformInfo.Details.CredentialsManagementPolicy.Change.AutoOnAdd
+            ChangeAuto       = $platformInfo.Details.CredentialsManagementPolicy.Change.PerformAutomatic
+            ChangeDays       = $platformInfo.Details.CredentialsManagementPolicy.Change.RequirePasswordEveryXDays
+            ChangeLast       = if ($details.secretManagement.lastModifiedTime) { (Get-Date -Date "01-01-1970").AddSeconds([double]$details.secretManagement.lastModifiedTime) } else { $null }
+            ChangeNext       = if ($details.secretManagement.lastModifiedTime -and $platformInfo.Details.CredentialsManagementPolicy.Change.RequirePasswordEveryXDays) { (Get-Date -Date "01-01-1970").AddSeconds([double]$details.secretManagement.lastModifiedTime).AddDays($platformInfo.Details.CredentialsManagementPolicy.Change.RequirePasswordEveryXDays) } else { $null }
+            ChangeInReset    = $platformInfo.Details.CredentialsManagementPolicy.SecretUpdateConfiguration.ChangePasswordInResetMode
+            VerifyManual = $platformInfo.Details.CredentialsManagementPolicy.Verification.AllowManual
+            VerifyOnAdd  = $platformInfo.Details.CredentialsManagementPolicy.Verification.AutoOnAdd
+            VerifyAuto   = $platformInfo.Details.CredentialsManagementPolicy.Verification.PerformAutomatic
+            VerifyDays   = $platformInfo.Details.CredentialsManagementPolicy.Verification.RequirePasswordEveryXDays
+            VerifyLast   = if ($details.secretManagement.lastVerifiedTime) { (Get-Date -Date "01-01-1970").AddSeconds([double]$details.secretManagement.lastVerifiedTime) } else { $null }
+            VerifyNext   = if ($details.secretManagement.lastVerifiedTime -and $platformInfo.Details.CredentialsManagementPolicy.Verification.RequirePasswordEveryXDays) { (Get-Date -Date "01-01-1970").AddSeconds([double]$details.secretManagement.lastVerifiedTime).AddDays($platformInfo.Details.CredentialsManagementPolicy.Verification.RequirePasswordEveryXDays) } else { $null }
+            ReconcileManual = $platformInfo.Details.CredentialsManagementPolicy.Reconcile.AllowManual
+            ReconcileUnSync = $platformInfo.Details.CredentialsManagementPolicy.Reconcile.AutomaticReconcileWhenUnsynced
+            ObjectName = $details.name
+            LogonAccount = $logonAccount
+            ReconcileAccount = $reconcileAccount
+        }
+
+        foreach ($k in $importedPropsList) {
+            $reportObj | Add-Member -MemberType NoteProperty -Name $k -Value $customProps[$k] -Force
+        }
+
+        $report += $reportObj
+
+    } catch {
+        Write-Warning "Failed to process account: $($acct.id) - $_"
+    }
+}
+
+try {
+    $report | Export-Csv -NoTypeInformation -Path $ReportPath
+    Write-Host "`nFull extended CyberArk account report exported to: $ReportPath" -ForegroundColor Green
+} catch {
+    Write-Error "Failed to export report to $ReportPath. $_"
+}
+
+::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 # Prompt for the account name (SAMAccountName, e.g., jdoe)
 $User = Read-Host "Enter the account (SAMAccountName) to search lockout-related events for"
 
