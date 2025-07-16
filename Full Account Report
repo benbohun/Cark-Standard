@@ -25,8 +25,8 @@ Write-Output "PAS accounts have been exported to: $exportPath"
 ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 <#
 .SYNOPSIS
-    Export CyberArk PAS accounts (all accounts, all safes, all platforms) with all extended/custom properties.
-    Dynamically adds columns for all custom fields (including Logon Account/Reconcile Account if present).
+    Export CyberArk PAS accounts (all safes, all platforms) with all extended/custom properties, 
+    dynamically including columns like Logon Account and Reconcile Account if present.
 #>
 
 param (
@@ -67,19 +67,19 @@ foreach ($acct in $accounts) {
 }
 $importedPropsList = $importedPropsList | Select-Object -Unique
 
-# Fetch all referenced platforms and safes (minimally, but could fetch all if you prefer)
+# Fetch all referenced platforms and safes (minimally)
 $neededPlatformIds = $accounts | Select-Object -ExpandProperty platformId -Unique
 $neededSafeNames   = $accounts | Select-Object -ExpandProperty safeName   -Unique
 
 Write-Host "Fetching referenced platforms and safes..." -ForegroundColor Cyan
 $platforms = @()
-foreach ($pid in $neededPlatformIds) {
-    $p = Get-PASPlatform -PlatformID $pid -ErrorAction SilentlyContinue
+foreach ($platformId in $neededPlatformIds) {
+    $p = Get-PASPlatform -PlatformID $platformId -ErrorAction SilentlyContinue
     if ($p) { $platforms += $p }
 }
 $safes = @()
-foreach ($sname in $neededSafeNames) {
-    $s = Get-PASSafe -SafeName $sname -ErrorAction SilentlyContinue
+foreach ($safeName in $neededSafeNames) {
+    $s = Get-PASSafe -SafeName $safeName -ErrorAction SilentlyContinue
     if ($s) { $safes += $s }
 }
 
@@ -156,7 +156,7 @@ foreach ($acct in $accounts) {
             ObjectName = $details.name
         }
 
-        # Add all custom/extended properties (including Logon/Reconcile Account if present)
+        # Add all custom/extended properties (including Logon Account/Reconcile Account)
         foreach ($k in $importedPropsList) {
             $reportObj | Add-Member -MemberType NoteProperty -Name $k -Value $customProps[$k] -Force
         }
