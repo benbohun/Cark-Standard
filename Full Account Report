@@ -23,154 +23,184 @@ Export-Csv -Path $exportPath -NoTypeInformation
 # Output completion message
 Write-Output "PAS accounts have been exported to: $exportPath"
 ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
-<#
-.SYNOPSIS
-    Export CyberArk PAS accounts (all safes, all platforms) with all extended/custom properties, 
-    dynamically including columns like Logon Account and Reconcile Account if present.
-#>
-
-param (
-    [string]$ReportPath = ".\AccountReport.csv"
-)
-
-$ErrorActionPreference = "Stop"
-
-# Ensure psPAS module is available
-if (!(Get-Module -ListAvailable -Name psPAS)) {
-    Write-Host "psPAS module not found, installing..." -ForegroundColor Yellow
-    Install-Module psPAS -Scope CurrentUser -Force
-}
+# Import psPAS Module
+Write-Host "==== Importing psPAS Module ====" -ForegroundColor Green
 Import-Module psPAS
 
-# Authenticate (update values if needed)
+# Prompt user for CyberArk credentials
+Write-Host "==== Prompting for CyberArk Credentials ====" -ForegroundColor Green
 $UPCred = Get-Credential
-Write-Host "Connecting to CyberArk..." -ForegroundColor Cyan
+
+# Get header authentication (PCLOUD Admins Only)
+Write-Host "==== Getting Identity Header Authentication ====" -ForegroundColor Green
 $header = Get-IdentityHeader -IdentityTenantURL "aat4012.id.cyberark.cloud" -psPASFormat -PCloudSubdomain "cna-prod" -UPCreds $UPCred
+
+# Register to use header credentials for PAS session
+Write-Host "==== Registering PAS Session ====" -ForegroundColor Green
 Use-PASSession $header
-Write-Host "Authentication successful!" -ForegroundColor Green
 
-# Fetch all accounts
-Write-Host "Fetching all CyberArk accounts..." -ForegroundColor Cyan
-$accounts = Get-PASAccount
+# Fetch all PAS accounts
+Write-Host "==== Fetching All PAS Accounts ====" -ForegroundColor Green
+$PASAccounts = Get-PASAccount
 
-if (!$accounts -or $accounts.Count -eq 0) {
-    Write-Warning "No accounts found! Please check connection or permissions."
+if (!$PASAccounts -or $PASAccounts.Count -eq 0) {
+    Write-Host "No accounts found! Please check connection or permissions." -ForegroundColor Red
     exit
 }
 
-# Dynamically build custom/extended property list across all accounts
-$importedPropsList = @()
-foreach ($acct in $accounts) {
+# Find all unique custom property names (flatten all platformAccountProperties)
+Write-Host "==== Collecting Custom Property Columns ====" -ForegroundColor Green
+$allCustomProps = @()
+foreach ($acct in $PASAccounts) {
     if ($acct.platformAccountProperties) {
-        $importedPropsList += $acct.platformAccountProperties.PSObject.Properties.Name
+        $allCustomProps += $acct.platformAccountProperties.PSObject.Properties.Name
     }
 }
-$importedPropsList = $importedPropsList | Select-Object -Unique
+$allCustomProps = $allCustomProps | Select-Object -Unique
 
-# Fetch all referenced platforms and safes (minimally)
-$neededPlatformIds = $accounts | Select-Object -ExpandProperty platformId -Unique
-$neededSafeNames   = $accounts | Select-Object -ExpandProperty safeName   -Unique
+# Add commonly-requested property columns, in case not present on any account (forces column in export)
+$forceIncludeProps = @(
+    'LogonAccount','ReconcileAccount','LogonDomain','UserDN','Port','Database','PublicSSHKeyPath','UseSudoOnReconcile',
+    'Domain','ApplicationID','ActiveDirectoryID','ReconcileIsWinAccount','Notes','PopulateKey','ImpersonateUser',
+    'KeyID','ApplicationObjectID','AWSAccessKeyID','AWSAccountID'
+)
+$allCustomProps = $allCustomProps + $forceIncludeProps | Select-Object -Unique
 
-Write-Host "Fetching referenced platforms and safes..." -ForegroundColor Cyan
+# Fetch referenced platforms/safes for metadata
+Write-Host "==== Fetching Referenced Platforms and Safes ====" -ForegroundColor Green
+$platformIds = $PASAccounts | Select-Object -ExpandProperty platformId -Unique | Where-Object { $_ -and $_.Trim() -ne "" }
+$safeNames   = $PASAccounts | Select-Object -ExpandProperty safeName   -Unique | Where-Object { $_ -and $_.Trim() -ne "" }
+
 $platforms = @()
-foreach ($platformId in $neededPlatformIds) {
+foreach ($platformId in $platformIds) {
     $p = Get-PASPlatform -PlatformID $platformId -ErrorAction SilentlyContinue
     if ($p) { $platforms += $p }
 }
 $safes = @()
-foreach ($safeName in $neededSafeNames) {
+foreach ($safeName in $safeNames) {
     $s = Get-PASSafe -SafeName $safeName -ErrorAction SilentlyContinue
     if ($s) { $safes += $s }
 }
-
 $platformsht = @{}
 $platforms | ForEach-Object { $platformsht[$_.PlatformID] = $_ }
 $safesht = @{}
 $safes | ForEach-Object { $safesht[$_.SafeName] = $_ }
 
-# Prepare the report
+# Set export path
+$exportPath = "E:\Installation Media\RemovePendingAccount\PASAccounts_Full.csv"
+
+# Building the report
+Write-Host "==== Building Extended Account Report (This May Take a Few Minutes) ====" -ForegroundColor Green
 $report = @()
 $counter = 0
-$total = $accounts.Count
+$total = $PASAccounts.Count
 
-foreach ($acct in $accounts) {
+foreach ($acct in $PASAccounts) {
     $counter++
-    Write-Progress -Activity "Processing accounts..." -Status "$counter of $total" -PercentComplete (($counter/$total)*100)
-
-    try {
-        $details = Get-PASAccount -id $acct.id
-
-        $platformInfo = $null
-        if ($details.platformId -and $platformsht.ContainsKey($details.platformId)) {
-            $platformInfo = $platformsht[$details.platformId]
-        }
-        $safeInfo = $null
-        if ($details.safeName -and $safesht.ContainsKey($details.safeName)) {
-            $safeInfo = $safesht[$details.safeName]
-        }
-
-        $customProps = @{}
-        foreach ($p in $importedPropsList) {
-            $customProps[$p] = $null
-            if ($details.platformAccountProperties -and $details.platformAccountProperties.$p) {
-                $customProps[$p] = $details.platformAccountProperties.$p
-            }
-        }
-
-        $reportObj = [PSCustomObject]@{
-            id                       = $details.id
-            SafeName                 = $details.safeName
-            PlatformID               = $details.platformId
-            PlatformName             = $platformInfo.Details.Name
-            Name                     = $details.name
-            Address                  = $details.address
-            UserName                 = $details.userName
-            SecretType               = $details.secretType
-            SecretStatus             = $details.secretManagement.Status
-            AccountManaged           = $details.secretManagement.automaticManagementEnabled
-            ManualManagementReason   = $details.secretManagement.manualManagementReason
-            ManagingCPM              = $safeInfo.ManagingCPM
-            CreatedTime              = $details.createdTime
-            CategoryModificationTime = $details.categoryModificationTime
-            RestrictedToSpecificMachines = $details.remoteMachinesAccess.accessRestrictedToRemoteMachines
-            RemoteMachines               = $details.remoteMachinesAccess.remoteMachines
-            DualControl   = $platformInfo.Details.PrivilegedAccessWorkflows.RequireDualControlPasswordAccessApproval.IsActive
-            ExclusiveUse  = $platformInfo.Details.PrivilegedAccessWorkflows.EnforceCheckinCheckoutExclusiveAccess.IsActive
-            OneTime       = $platformInfo.Details.PrivilegedAccessWorkflows.EnforceOnetimePasswordAccess.IsActive
-            RequireReason = $platformInfo.Details.PrivilegedAccessWorkflows.RequireUsersToSpecifyReasonForAccess.IsActive
-            ChangeManual     = $platformInfo.Details.CredentialsManagementPolicy.Change.AllowManual
-            ChangeOnAdd      = $platformInfo.Details.CredentialsManagementPolicy.Change.AutoOnAdd
-            ChangeAuto       = $platformInfo.Details.CredentialsManagementPolicy.Change.PerformAutomatic
-            ChangeDays       = $platformInfo.Details.CredentialsManagementPolicy.Change.RequirePasswordEveryXDays
-            ChangeLast       = if ($details.secretManagement.lastModifiedTime) { (Get-Date -Date "01-01-1970").AddSeconds([double]$details.secretManagement.lastModifiedTime) } else { $null }
-            ChangeNext       = if ($details.secretManagement.lastModifiedTime -and $platformInfo.Details.CredentialsManagementPolicy.Change.RequirePasswordEveryXDays) { (Get-Date -Date "01-01-1970").AddSeconds([double]$details.secretManagement.lastModifiedTime).AddDays($platformInfo.Details.CredentialsManagementPolicy.Change.RequirePasswordEveryXDays) } else { $null }
-            ChangeInReset    = $platformInfo.Details.CredentialsManagementPolicy.SecretUpdateConfiguration.ChangePasswordInResetMode
-            VerifyManual = $platformInfo.Details.CredentialsManagementPolicy.Verification.AllowManual
-            VerifyOnAdd  = $platformInfo.Details.CredentialsManagementPolicy.Verification.AutoOnAdd
-            VerifyAuto   = $platformInfo.Details.CredentialsManagementPolicy.Verification.PerformAutomatic
-            VerifyDays   = $platformInfo.Details.CredentialsManagementPolicy.Verification.RequirePasswordEveryXDays
-            VerifyLast   = if ($details.secretManagement.lastVerifiedTime) { (Get-Date -Date "01-01-1970").AddSeconds([double]$details.secretManagement.lastVerifiedTime) } else { $null }
-            VerifyNext   = if ($details.secretManagement.lastVerifiedTime -and $platformInfo.Details.CredentialsManagementPolicy.Verification.RequirePasswordEveryXDays) { (Get-Date -Date "01-01-1970").AddSeconds([double]$details.secretManagement.lastVerifiedTime).AddDays($platformInfo.Details.CredentialsManagementPolicy.Verification.RequirePasswordEveryXDays) } else { $null }
-            ReconcileManual = $platformInfo.Details.CredentialsManagementPolicy.Reconcile.AllowManual
-            ReconcileUnSync = $platformInfo.Details.CredentialsManagementPolicy.Reconcile.AutomaticReconcileWhenUnsynced
-            ObjectName = $details.name
-        }
-
-        # Add all custom/extended properties (including Logon Account/Reconcile Account)
-        foreach ($k in $importedPropsList) {
-            $reportObj | Add-Member -MemberType NoteProperty -Name $k -Value $customProps[$k] -Force
-        }
-
-        $report += $reportObj
-
-    } catch {
-        Write-Warning "Failed to process account: $($acct.id) - $_"
+    if ($counter % 50 -eq 1) {
+        Write-Host "    ...Processed $counter of $total accounts..." -ForegroundColor Green
     }
+    $platformInfo = $null
+    if ($acct.platformId -and $platformsht.ContainsKey($acct.platformId)) {
+        $platformInfo = $platformsht[$acct.platformId]
+    }
+    $safeInfo = $null
+    if ($acct.safeName -and $safesht.ContainsKey($acct.safeName)) {
+        $safeInfo = $safesht[$acct.safeName]
+    }
+
+    # Flatten secretManagement
+    $secretStatus = $acct.secretManagement.Status
+    $accountManaged = $acct.secretManagement.automaticManagementEnabled
+    $manualManagementReason = $acct.secretManagement.manualManagementReason
+
+    # Policy, Change, Verify, Reconcile fields (if platformInfo present)
+    $dualControl = $exclusiveUse = $oneTime = $requireReason = $null
+    $changeManual = $changeOnAdd = $changeAuto = $changeDays = $changeLast = $changeNext = $changeInReset = $null
+    $verifyManual = $verifyOnAdd = $verifyAuto = $verifyDays = $verifyLast = $verifyNext = $null
+    $reconcileManual = $reconcileUnSync = $null
+
+    if ($platformInfo) {
+        $dualControl   = $platformInfo.Details.PrivilegedAccessWorkflows.RequireDualControlPasswordAccessApproval.IsActive
+        $exclusiveUse  = $platformInfo.Details.PrivilegedAccessWorkflows.EnforceCheckinCheckoutExclusiveAccess.IsActive
+        $oneTime       = $platformInfo.Details.PrivilegedAccessWorkflows.EnforceOnetimePasswordAccess.IsActive
+        $requireReason = $platformInfo.Details.PrivilegedAccessWorkflows.RequireUsersToSpecifyReasonForAccess.IsActive
+
+        $changeManual     = $platformInfo.Details.CredentialsManagementPolicy.Change.AllowManual
+        $changeOnAdd      = $platformInfo.Details.CredentialsManagementPolicy.Change.AutoOnAdd
+        $changeAuto       = $platformInfo.Details.CredentialsManagementPolicy.Change.PerformAutomatic
+        $changeDays       = $platformInfo.Details.CredentialsManagementPolicy.Change.RequirePasswordEveryXDays
+        $changeLast       = if ($acct.secretManagement.lastModifiedTime) { (Get-Date -Date "01-01-1970").AddSeconds([double]$acct.secretManagement.lastModifiedTime) } else { $null }
+        $changeNext       = if ($acct.secretManagement.lastModifiedTime -and $changeDays) { (Get-Date -Date "01-01-1970").AddSeconds([double]$acct.secretManagement.lastModifiedTime).AddDays($changeDays) } else { $null }
+        $changeInReset    = $platformInfo.Details.CredentialsManagementPolicy.SecretUpdateConfiguration.ChangePasswordInResetMode
+
+        $verifyManual = $platformInfo.Details.CredentialsManagementPolicy.Verification.AllowManual
+        $verifyOnAdd  = $platformInfo.Details.CredentialsManagementPolicy.Verification.AutoOnAdd
+        $verifyAuto   = $platformInfo.Details.CredentialsManagementPolicy.Verification.PerformAutomatic
+        $verifyDays   = $platformInfo.Details.CredentialsManagementPolicy.Verification.RequirePasswordEveryXDays
+        $verifyLast   = if ($acct.secretManagement.lastVerifiedTime) { (Get-Date -Date "01-01-1970").AddSeconds([double]$acct.secretManagement.lastVerifiedTime) } else { $null }
+        $verifyNext   = if ($acct.secretManagement.lastVerifiedTime -and $verifyDays) { (Get-Date -Date "01-01-1970").AddSeconds([double]$acct.secretManagement.lastVerifiedTime).AddDays($verifyDays) } else { $null }
+
+        $reconcileManual = $platformInfo.Details.CredentialsManagementPolicy.Reconcile.AllowManual
+        $reconcileUnSync = $platformInfo.Details.CredentialsManagementPolicy.Reconcile.AutomaticReconcileWhenUnsynced
+    }
+
+    $customProps = @{}
+    foreach ($p in $allCustomProps) {
+        $customProps[$p] = $null
+        if ($acct.platformAccountProperties -and $acct.platformAccountProperties.$p) {
+            $customProps[$p] = $acct.platformAccountProperties.$p
+        }
+    }
+
+    $reportObj = [PSCustomObject]@{
+        id                       = $acct.id
+        SafeName                 = $acct.safeName
+        PlatformID               = $acct.platformId
+        PlatformName             = if ($platformInfo) { $platformInfo.Details.Name } else { $null }
+        Name                     = $acct.name
+        Address                  = $acct.address
+        UserName                 = $acct.userName
+        SecretType               = $acct.secretType
+        SecretStatus             = $secretStatus
+        AccountManaged           = $accountManaged
+        ManualManagementReason   = $manualManagementReason
+        ManagingCPM              = if ($safeInfo) { $safeInfo.ManagingCPM } else { $null }
+        CreatedTime              = $acct.createdTime
+        CategoryModificationTime = $acct.categoryModificationTime
+        RestrictedToSpecificMachines = $acct.remoteMachinesAccess.accessRestrictedToRemoteMachines
+        RemoteMachines           = $acct.remoteMachinesAccess.remoteMachines
+        DualControl              = $dualControl
+        ExclusiveUse             = $exclusiveUse
+        OneTime                  = $oneTime
+        RequireReason            = $requireReason
+        ChangeManual             = $changeManual
+        ChangeOnAdd              = $changeOnAdd
+        ChangeAuto               = $changeAuto
+        ChangeDays               = $changeDays
+        ChangeLast               = $changeLast
+        ChangeNext               = $changeNext
+        ChangeInReset            = $changeInReset
+        VerifyManual             = $verifyManual
+        VerifyOnAdd              = $verifyOnAdd
+        VerifyAuto               = $verifyAuto
+        VerifyDays               = $verifyDays
+        VerifyLast               = $verifyLast
+        VerifyNext               = $verifyNext
+        ReconcileManual          = $reconcileManual
+        ReconcileUnSync          = $reconcileUnSync
+        ObjectName               = $acct.name
+    }
+
+    foreach ($k in $allCustomProps) {
+        $reportObj | Add-Member -MemberType NoteProperty -Name $k -Value $customProps[$k] -Force
+    }
+
+    $report += $reportObj
 }
 
-try {
-    $report | Export-Csv -NoTypeInformation -Path $ReportPath
-    Write-Host "`nFull extended CyberArk account report exported to: $ReportPath" -ForegroundColor Green
-} catch {
-    Write-Error "Failed to export report to $ReportPath. $_"
-}
+# Export to CSV
+Write-Host "==== Exporting Report to CSV ====" -ForegroundColor Green
+$report | Export-Csv -Path $exportPath -NoTypeInformation
+
+Write-Host "==== PAS FULL ACCOUNT REPORT EXPORTED TO: $exportPath ====" -ForegroundColor Green
