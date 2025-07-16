@@ -25,48 +25,40 @@ Write-Output "PAS accounts have been exported to: $exportPath"
 ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 <#
 .SYNOPSIS
-    Export CyberArk PAS accounts with all extended properties to CSV, simply adding Logon and Reconcile account values as columns (raw, no lookup).
+    Export CyberArk PAS accounts (all accounts, all safes, all platforms) with all extended/custom properties.
+    Dynamically adds columns for all custom fields (including Logon Account/Reconcile Account if present).
 #>
 
 param (
-    [Parameter(Mandatory = $false)]
-    [string]$ReportPath = "PASAccounts_ExtendedReport.csv"
+    [string]$ReportPath = ".\AccountReport.csv"
 )
 
 $ErrorActionPreference = "Stop"
 
+# Ensure psPAS module is available
 if (!(Get-Module -ListAvailable -Name psPAS)) {
     Write-Host "psPAS module not found, installing..." -ForegroundColor Yellow
     Install-Module psPAS -Scope CurrentUser -Force
 }
 Import-Module psPAS
 
+# Authenticate (update values if needed)
 $UPCred = Get-Credential
 Write-Host "Connecting to CyberArk..." -ForegroundColor Cyan
 $header = Get-IdentityHeader -IdentityTenantURL "aat4012.id.cyberark.cloud" -psPASFormat -PCloudSubdomain "cna-prod" -UPCreds $UPCred
 Use-PASSession $header
 Write-Host "Authentication successful!" -ForegroundColor Green
 
-Write-Host "Fetching platforms and safes..." -ForegroundColor Cyan
-$platforms = Get-PASPlatform
-$safes = Get-PASSafe
-
-$platformsht = @{}
-$platforms | ForEach-Object { $platformsht[$_.PlatformID] = $_ }
-$safesht = @{}
-$safes | ForEach-Object { $safesht[$_.SafeName] = $_ }
-
-Write-Host "Fetching CyberArk accounts..." -ForegroundColor Cyan
+# Fetch all accounts
+Write-Host "Fetching all CyberArk accounts..." -ForegroundColor Cyan
 $accounts = Get-PASAccount
 
 if (!$accounts -or $accounts.Count -eq 0) {
-    Write-Warning "No accounts found! Please check your connection, permissions, or filters."
+    Write-Warning "No accounts found! Please check connection or permissions."
     exit
 }
 
-$report = @()
-
-# Collect all custom/imported property names
+# Dynamically build custom/extended property list across all accounts
 $importedPropsList = @()
 foreach ($acct in $accounts) {
     if ($acct.platformAccountProperties) {
@@ -75,6 +67,29 @@ foreach ($acct in $accounts) {
 }
 $importedPropsList = $importedPropsList | Select-Object -Unique
 
+# Fetch all referenced platforms and safes (minimally, but could fetch all if you prefer)
+$neededPlatformIds = $accounts | Select-Object -ExpandProperty platformId -Unique
+$neededSafeNames   = $accounts | Select-Object -ExpandProperty safeName   -Unique
+
+Write-Host "Fetching referenced platforms and safes..." -ForegroundColor Cyan
+$platforms = @()
+foreach ($pid in $neededPlatformIds) {
+    $p = Get-PASPlatform -PlatformID $pid -ErrorAction SilentlyContinue
+    if ($p) { $platforms += $p }
+}
+$safes = @()
+foreach ($sname in $neededSafeNames) {
+    $s = Get-PASSafe -SafeName $sname -ErrorAction SilentlyContinue
+    if ($s) { $safes += $s }
+}
+
+$platformsht = @{}
+$platforms | ForEach-Object { $platformsht[$_.PlatformID] = $_ }
+$safesht = @{}
+$safes | ForEach-Object { $safesht[$_.SafeName] = $_ }
+
+# Prepare the report
+$report = @()
 $counter = 0
 $total = $accounts.Count
 
@@ -92,16 +107,6 @@ foreach ($acct in $accounts) {
         $safeInfo = $null
         if ($details.safeName -and $safesht.ContainsKey($details.safeName)) {
             $safeInfo = $safesht[$details.safeName]
-        }
-
-        # Simple raw property extraction for logon and reconcile account
-        $logonAccount = $null
-        $reconcileAccount = $null
-        if ($details.platformAccountProperties) {
-            $logonAccount = $details.platformAccountProperties['LogonAccount']
-            if (-not $logonAccount) { $logonAccount = $details.platformAccountProperties['Logon Account'] }
-            $reconcileAccount = $details.platformAccountProperties['ReconcileAccount']
-            if (-not $reconcileAccount) { $reconcileAccount = $details.platformAccountProperties['Reconcile Account'] }
         }
 
         $customProps = @{}
@@ -149,10 +154,9 @@ foreach ($acct in $accounts) {
             ReconcileManual = $platformInfo.Details.CredentialsManagementPolicy.Reconcile.AllowManual
             ReconcileUnSync = $platformInfo.Details.CredentialsManagementPolicy.Reconcile.AutomaticReconcileWhenUnsynced
             ObjectName = $details.name
-            LogonAccount = $logonAccount
-            ReconcileAccount = $reconcileAccount
         }
 
+        # Add all custom/extended properties (including Logon/Reconcile Account if present)
         foreach ($k in $importedPropsList) {
             $reportObj | Add-Member -MemberType NoteProperty -Name $k -Value $customProps[$k] -Force
         }
@@ -170,5 +174,3 @@ try {
 } catch {
     Write-Error "Failed to export report to $ReportPath. $_"
 }
-
-
