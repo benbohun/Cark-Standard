@@ -1,4 +1,6 @@
-# Import required module
+# CyberArk GetAccounts Full Extended Report Script
+# Reference: https://docs.cyberark.com/privilege-cloud-shared-services/latest/en/content/sdk/getaccounts.htm
+
 Import-Module psPAS
 
 # Define Log File
@@ -11,14 +13,14 @@ Function Write-Log {
     Write-Output $LogEntry
 }
 
-# Step 1: Authenticate with CyberArk API
+# Step 1: Authenticate with CyberArk API (OAuth2 Client Credentials)
 $IdentityTenantID = "aat4012"
-$PCloudSubdomain = "cna-prod"
-$ClientID = Read-Host "Enter your CyberArk API Client ID"
-$ClientSecret = Read-Host "Enter your CyberArk API Client Secret" -AsSecureString
-$ClientSecret = [System.Net.NetworkCredential]::new("", $ClientSecret).Password
+$PCloudSubdomain  = "cna-prod"
+$ClientID         = Read-Host "Enter your CyberArk API Client ID"
+$ClientSecret     = Read-Host "Enter your CyberArk API Client Secret" -AsSecureString
+$ClientSecret     = [System.Net.NetworkCredential]::new("", $ClientSecret).Password
 
-$TokenURL = "https://$IdentityTenantID.id.cyberark.cloud/oauth2/platformtoken"
+$TokenURL  = "https://$IdentityTenantID.id.cyberark.cloud/oauth2/platformtoken"
 $TokenBody = @{
     grant_type    = "client_credentials"
     client_id     = $ClientID
@@ -27,9 +29,10 @@ $TokenBody = @{
 $headers = @{
     "Content-Type" = "application/x-www-form-urlencoded"
 }
+
 try {
     $TokenResponse = Invoke-RestMethod -Uri $TokenURL -Method Post -Headers $headers -Body $TokenBody
-    $BearerToken = [string]$TokenResponse.access_token
+    $BearerToken   = [string]$TokenResponse.access_token
 
     if ([string]::IsNullOrEmpty($BearerToken) -or $BearerToken.Length -lt 100) {
         Write-Log "ERROR: Received an invalid token. Exiting..."
@@ -41,7 +44,13 @@ try {
     exit
 }
 
-# Step 2: Get GetAccounts API parameters
+# Prepare headers for subsequent API calls
+$headers = @{
+    "Authorization" = "Bearer $BearerToken"
+    "Content-Type"  = "application/json"
+}
+
+# Prompt for GetAccounts API parameters (see doc)
 $search     = Read-Host "Enter search string (or leave blank for all)"
 $searchType = Read-Host "Enter searchType (default: contains, or exact)"
 $sort       = Read-Host "Sort by field (e.g. name:asc or createdTime:desc), or leave blank"
@@ -49,12 +58,6 @@ $limit      = Read-Host "Enter page size (default: 100, max: 100)"
 $filter     = Read-Host "Enter JSON filter string (see docs, or leave blank)"
 $limit      = if ([string]::IsNullOrEmpty($limit)) { 100 } else { [int]$limit }
 $searchType = if ([string]::IsNullOrEmpty($searchType)) { "contains" } else { $searchType }
-
-# Set API headers for all further calls
-$headers = @{
-    "Authorization" = "Bearer $BearerToken"
-    "Content-Type"  = "application/json"
-}
 
 # Prepare to page through all accounts
 $AccountApiBase = "https://$PCloudSubdomain.privilegecloud.cyberark.cloud/PasswordVault/api/Accounts"
@@ -206,8 +209,6 @@ $ProcessedAccounts = $allAccounts | ForEach-Object {
 # Export to CSV
 $ProcessedAccounts | Export-Csv -Path $CsvFilePath -NoTypeInformation
 Write-Log "✅ CyberArk full account report has been successfully exported to: $CsvFilePath"
-
-
 
 
 
