@@ -1,0 +1,139 @@
+Using the same login as platform but instead this is for getaccount, generate a full extended account report
+https://docs.cyberark.com/privilege-cloud-shared-services/latest/en/content/sdk/getaccounts.htm
+
+https://<subdomain>.privilegecloud.cyberark.cloud/PasswordVault/API/Accounts?search={search}&searchType={searchType}&sort={sort}&offset={offset}&limit={limit}&filter={filter}/
+
+# Import required module
+Import-Module psPAS
+
+# Define Log File
+$LogFile = "CyberArk_PlatformReportLog.txt"
+Function Write-Log {
+    Param ([string]$Message)
+    $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $LogEntry = "$Timestamp - $Message"
+    Add-Content -Path $LogFile -Value $LogEntry
+    Write-Output $LogEntry
+}
+
+# Step 1: Authenticate with CyberArk API
+$IdentityTenantID = "aat4012"
+$PCloudSubdomain = "cna-prod"
+$ClientID = Read-Host "Enter your CyberArk API Client ID"
+$ClientSecret = Read-Host "Enter your CyberArk API Client Secret" -AsSecureString
+$ClientSecret = [System.Net.NetworkCredential]::new("", $ClientSecret).Password
+
+# Authenticate
+$TokenURL = "https://$IdentityTenantID.id.cyberark.cloud/oauth2/platformtoken"
+$TokenBody = @{
+    grant_type    = "client_credentials"
+    client_id     = $ClientID
+    client_secret = $ClientSecret
+}
+$headers = @{
+    "Content-Type" = "application/x-www-form-urlencoded"
+}
+
+try {
+    $TokenResponse = Invoke-RestMethod -Uri $TokenURL -Method Post -Headers $headers -Body $TokenBody
+    $BearerToken = [string]$TokenResponse.access_token
+
+    if ([string]::IsNullOrEmpty($BearerToken) -or $BearerToken.Length -lt 100) {
+        Write-Log "ERROR: Received an invalid token. Exiting..."
+        exit
+    }
+    Write-Log "Authentication successful."
+} catch {
+    Write-Log "ERROR: Authentication failed - $_"
+    exit
+}
+
+# Define API Headers and Endpoint
+$headers = @{
+    "Authorization" = "Bearer $BearerToken"
+    "Content-Type"  = "application/json"
+}
+
+# Define API Endpoints for All Platforms & Filtered Platforms
+$AllPlatformsEndpoint = "https://$PCloudSubdomain.privilegecloud.cyberark.cloud/PasswordVault/api/Platforms/"
+$ActivePlatformsEndpoint = "https://$PCloudSubdomain.privilegecloud.cyberark.cloud/PasswordVault/api/Platforms/?Active=True"
+
+# Choose which endpoint to use
+$UseFiltered = Read-Host "Do you want to filter by active platforms only? (yes/no)"
+if ($UseFiltered -eq "yes") {
+    $APIEndpoint = $ActivePlatformsEndpoint
+    Write-Log "Fetching only active platforms..."
+} else {
+    $APIEndpoint = $AllPlatformsEndpoint
+    Write-Log "Fetching all platforms..."
+}
+
+# Fetch Platforms
+try {
+    $PlatformsResponse = Invoke-RestMethod -Uri $APIEndpoint -Method Get -Headers $headers -ErrorAction Stop
+
+    # Save Debug File
+    $DebugFile = "E:\Installation Media\RemovePendingAccount\CyberArk_Platforms_Debug.json"
+    $PlatformsResponse | ConvertTo-Json -Depth 3 | Out-File $DebugFile
+    Write-Output "Raw API Response saved to: $DebugFile"
+
+    # Extract platforms correctly
+    if ($null -eq $PlatformsResponse.Platforms -or $PlatformsResponse.Platforms.Count -eq 0) {
+        Write-Log "ERROR: No platforms found. Check API permissions."
+        exit
+    }
+
+    Write-Log "Retrieved $(($PlatformsResponse.Platforms | Measure-Object).Count) platforms."
+} catch {
+    Write-Log "ERROR: Failed to retrieve platform list - $_"
+    exit
+}
+
+# Export Path
+$CsvFilePath = "E:\Installation Media\RemovePendingAccount\CyberArk_Platforms.csv"
+
+# Process Data with Correct JSON Structure
+$ProcessedPlatforms = $PlatformsResponse.Platforms | ForEach-Object {
+    [PSCustomObject]@{
+        PlatformID    = $_.general.id
+        PlatformName  = $_.general.name
+        Active        = $_.general.active
+        Description   = $_.general.description
+        PlatformBaseID = $_.general.platformBaseID
+        PlatformType  = $_.general.platformType
+        SystemType    = $_.general.systemType
+
+        # Required Properties
+        RequiredProperties = ($_.properties.required.name -join "; ")
+        OptionalProperties = ($_.properties.optional.name -join "; ")
+
+        # Linked Accounts
+        LinkedAccounts = ($_.linkedAccounts.name -join "; ")
+
+        # Credentials Management
+        AllowedSafes                       = $_.credentialsManagement.allowedSafes
+        AllowManualChange                  = $_.credentialsManagement.allowManualChange -as [string]
+        PerformPeriodicChange              = $_.credentialsManagement.performPeriodicChange -as [string]
+        RequirePasswordChangeEveryXDays    = $_.credentialsManagement.requirePasswordChangeEveryXDays -as [string]
+        AllowManualVerification            = $_.credentialsManagement.allowManualVerification -as [string]
+        PerformPeriodicVerification        = $_.credentialsManagement.performPeriodicVerification -as [string]
+        RequirePasswordVerificationEveryXDays = $_.credentialsManagement.requirePasswordVerificationEveryXDays -as [string]
+        AllowManualReconciliation          = $_.credentialsManagement.allowManualReconciliation -as [string]
+        AutomaticReconcileWhenUnsynched    = $_.credentialsManagement.automaticReconcileWhenUnsynched -as [string]
+
+        # Session Management
+        RequirePrivilegedSessionMonitoringAndIsolation = $_.sessionManagement.requirePrivilegedSessionMonitoringAndIsolation -as [string]
+        RecordAndSaveSessionActivity       = $_.sessionManagement.recordAndSaveSessionActivity -as [string]
+        PSMServerID                        = $_.sessionManagement.PSMServerID -as [string]
+
+        # Privileged Access Workflows
+        RequireDualControlPasswordAccessApproval = $_.privilegedAccessWorkflows.requireDualControlPasswordAccessApproval -as [string]
+        EnforceCheckinCheckoutExclusiveAccess    = $_.privilegedAccessWorkflows.enforceCheckinCheckoutExclusiveAccess -as [string]
+        EnforceOnetimePasswordAccess             = $_.privilegedAccessWorkflows.enforceOnetimePasswordAccess -as [string]
+    }
+}
+
+# Export to CSV
+$ProcessedPlatforms | Export-Csv -Path $CsvFilePath -NoTypeInformation
+
+Write-Log "✅ CyberArk platform report has been successfully exported to: $CsvFilePath"
