@@ -83,7 +83,7 @@ do {
 
     try {
         $response = Invoke-RestMethod -Uri $AccountUri -Headers $headers -Method Get -ErrorAction Stop
-        if ($null -eq $response || $null -eq $response.accounts) {
+        if ($null -eq $response -or $null -eq $response.accounts) {
             Write-Log "WARNING: No accounts returned at offset $offset."
             break
         }
@@ -206,9 +206,6 @@ $ProcessedAccounts = $allAccounts | ForEach-Object {
 # Export to CSV
 $ProcessedAccounts | Export-Csv -Path $CsvFilePath -NoTypeInformation
 Write-Log "✅ CyberArk full account report has been successfully exported to: $CsvFilePath"
-
-
-
 
 
 
