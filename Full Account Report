@@ -60,7 +60,7 @@ $allCustomProps = $allCustomProps | Select-Object -Unique
 
 # Add standard platform account properties if not present
 $forceIncludeProps = @(
-    'Logon Account','Reconcile Account','Logon Domain','UserDN','Port','Database','PublicSSHKeyPath','UseSudoOnReconcile',
+    'Logon Account','Reconcile Account','extrapass1','extrapass3','LogonDomain','UserDN','Port','Database','PublicSSHKeyPath','UseSudoOnReconcile',
     'Domain','ApplicationID','ActiveDirectoryID','ReconcileIsWinAccount','Notes','PopulateKey','ImpersonateUser',
     'KeyID','ApplicationObjectID','AWSAccessKeyID','AWSAccountID'
 )
@@ -95,6 +95,15 @@ $report = @()
 $counter = 0
 $total = $PASAccounts.Count
 
+# Utility to convert boolean/nullable values to Yes/No
+function YesNo ($val) {
+    if ($null -eq $val) { return "No" }
+    if ($val -is [System.Management.Automation.PSObject] -and $val.PSObject.Properties.Name -contains 'IsActive') {
+        return $(if ($val.IsActive) { "Yes" } else { "No" })
+    }
+    return $(if ($val) { "Yes" } else { "No" })
+}
+
 foreach ($acct in $PASAccounts) {
     $counter++
     if ($counter % 50 -eq 1) {
@@ -125,28 +134,28 @@ foreach ($acct in $PASAccounts) {
     $reconcileManual = $reconcileUnSync = $null
 
     if ($platformInfo) {
-        $dualControl   = $platformInfo.Details.PrivilegedAccessWorkflows.RequireDualControlPasswordAccessApproval.IsActive
-        $exclusiveUse  = $platformInfo.Details.PrivilegedAccessWorkflows.EnforceCheckinCheckoutExclusiveAccess.IsActive
-        $oneTime       = $platformInfo.Details.PrivilegedAccessWorkflows.EnforceOnetimePasswordAccess.IsActive
-        $requireReason = $platformInfo.Details.PrivilegedAccessWorkflows.RequireUsersToSpecifyReasonForAccess.IsActive
+        $dualControl   = YesNo $platformInfo.Details.PrivilegedAccessWorkflows.RequireDualControlPasswordAccessApproval.IsActive
+        $exclusiveUse  = YesNo $platformInfo.Details.PrivilegedAccessWorkflows.EnforceCheckinCheckoutExclusiveAccess.IsActive
+        $oneTime       = YesNo $platformInfo.Details.PrivilegedAccessWorkflows.EnforceOnetimePasswordAccess.IsActive
+        $requireReason = YesNo $platformInfo.Details.PrivilegedAccessWorkflows.RequireUsersToSpecifyReasonForAccess.IsActive
 
-        $changeManual     = $platformInfo.Details.CredentialsManagementPolicy.Change.AllowManual
-        $changeOnAdd      = $platformInfo.Details.CredentialsManagementPolicy.Change.AutoOnAdd
-        $changeAuto       = $platformInfo.Details.CredentialsManagementPolicy.Change.PerformAutomatic
+        $changeManual     = YesNo $platformInfo.Details.CredentialsManagementPolicy.Change.AllowManual
+        $changeOnAdd      = YesNo $platformInfo.Details.CredentialsManagementPolicy.Change.AutoOnAdd
+        $changeAuto       = YesNo $platformInfo.Details.CredentialsManagementPolicy.Change.PerformAutomatic
         $changeDays       = $platformInfo.Details.CredentialsManagementPolicy.Change.RequirePasswordEveryXDays
         $changeLast       = if ($details.secretManagement.lastModifiedTime) { (Get-Date -Date "01-01-1970").AddSeconds([double]$details.secretManagement.lastModifiedTime) } else { $null }
         $changeNext       = if ($details.secretManagement.lastModifiedTime -and $changeDays) { (Get-Date -Date "01-01-1970").AddSeconds([double]$details.secretManagement.lastModifiedTime).AddDays($changeDays) } else { $null }
-        $changeInReset    = $platformInfo.Details.CredentialsManagementPolicy.SecretUpdateConfiguration.ChangePasswordInResetMode
+        $changeInReset    = YesNo $platformInfo.Details.CredentialsManagementPolicy.SecretUpdateConfiguration.ChangePasswordInResetMode
 
-        $verifyManual = $platformInfo.Details.CredentialsManagementPolicy.Verification.AllowManual
-        $verifyOnAdd  = $platformInfo.Details.CredentialsManagementPolicy.Verification.AutoOnAdd
-        $verifyAuto   = $platformInfo.Details.CredentialsManagementPolicy.Verification.PerformAutomatic
+        $verifyManual = YesNo $platformInfo.Details.CredentialsManagementPolicy.Verification.AllowManual
+        $verifyOnAdd  = YesNo $platformInfo.Details.CredentialsManagementPolicy.Verification.AutoOnAdd
+        $verifyAuto   = YesNo $platformInfo.Details.CredentialsManagementPolicy.Verification.PerformAutomatic
         $verifyDays   = $platformInfo.Details.CredentialsManagementPolicy.Verification.RequirePasswordEveryXDays
         $verifyLast   = if ($details.secretManagement.lastVerifiedTime) { (Get-Date -Date "01-01-1970").AddSeconds([double]$details.secretManagement.lastVerifiedTime) } else { $null }
         $verifyNext   = if ($details.secretManagement.lastVerifiedTime -and $verifyDays) { (Get-Date -Date "01-01-1970").AddSeconds([double]$details.secretManagement.lastVerifiedTime).AddDays($verifyDays) } else { $null }
 
-        $reconcileManual = $platformInfo.Details.CredentialsManagementPolicy.Reconcile.AllowManual
-        $reconcileUnSync = $platformInfo.Details.CredentialsManagementPolicy.Reconcile.AutomaticReconcileWhenUnsynced
+        $reconcileManual = YesNo $platformInfo.Details.CredentialsManagementPolicy.Reconcile.AllowManual
+        $reconcileUnSync = YesNo $platformInfo.Details.CredentialsManagementPolicy.Reconcile.AutomaticReconcileWhenUnsynced
     }
 
     $customProps = @{}
@@ -155,6 +164,17 @@ foreach ($acct in $PASAccounts) {
         if ($details.platformAccountProperties -and $details.platformAccountProperties.$p) {
             $customProps[$p] = $details.platformAccountProperties.$p
         }
+    }
+
+    # --- Preferred logic for LogonAccount and ReconcileAccount columns ---
+    $logonAccount = $null
+    $reconcileAccount = $null
+    if ($details.platformAccountProperties) {
+        $logonAccount      = $details.platformAccountProperties["Logon Account"]
+        if (-not $logonAccount) { $logonAccount = $details.platformAccountProperties["extrapass1"] }
+
+        $reconcileAccount  = $details.platformAccountProperties["Reconcile Account"]
+        if (-not $reconcileAccount) { $reconcileAccount = $details.platformAccountProperties["extrapass3"] }
     }
 
     $reportObj = [PSCustomObject]@{
@@ -194,6 +214,8 @@ foreach ($acct in $PASAccounts) {
         ReconcileManual          = $reconcileManual
         ReconcileUnSync          = $reconcileUnSync
         ObjectName               = $details.name
+        LogonAccount             = $logonAccount
+        ReconcileAccount         = $reconcileAccount
     }
 
     foreach ($k in $allCustomProps) {
