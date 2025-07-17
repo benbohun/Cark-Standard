@@ -1,3 +1,225 @@
+# Import required module
+Import-Module psPAS
+
+# Define Log File
+$LogFile = "CyberArk_AccountReportLog.txt"
+Function Write-Log {
+    Param ([string]$Message)
+    $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $LogEntry = "$Timestamp - $Message"
+    Add-Content -Path $LogFile -Value $LogEntry
+    Write-Output $LogEntry
+}
+
+# Step 1: Authenticate with CyberArk API
+$IdentityTenantID = "aat4012"
+$PCloudSubdomain = "cna-prod"
+$ClientID = Read-Host "Enter your CyberArk API Client ID"
+$ClientSecret = Read-Host "Enter your CyberArk API Client Secret" -AsSecureString
+$ClientSecret = [System.Net.NetworkCredential]::new("", $ClientSecret).Password
+
+$TokenURL = "https://$IdentityTenantID.id.cyberark.cloud/oauth2/platformtoken"
+$TokenBody = @{
+    grant_type    = "client_credentials"
+    client_id     = $ClientID
+    client_secret = $ClientSecret
+}
+$headers = @{
+    "Content-Type" = "application/x-www-form-urlencoded"
+}
+try {
+    $TokenResponse = Invoke-RestMethod -Uri $TokenURL -Method Post -Headers $headers -Body $TokenBody
+    $BearerToken = [string]$TokenResponse.access_token
+
+    if ([string]::IsNullOrEmpty($BearerToken) -or $BearerToken.Length -lt 100) {
+        Write-Log "ERROR: Received an invalid token. Exiting..."
+        exit
+    }
+    Write-Log "Authentication successful."
+} catch {
+    Write-Log "ERROR: Authentication failed - $_"
+    exit
+}
+
+# Step 2: Get GetAccounts API parameters
+$search     = Read-Host "Enter search string (or leave blank for all)"
+$searchType = Read-Host "Enter searchType (default: contains, or exact)"
+$sort       = Read-Host "Sort by field (e.g. name:asc or createdTime:desc), or leave blank"
+$limit      = Read-Host "Enter page size (default: 100, max: 100)"
+$filter     = Read-Host "Enter JSON filter string (see docs, or leave blank)"
+$limit      = if ([string]::IsNullOrEmpty($limit)) { 100 } else { [int]$limit }
+$searchType = if ([string]::IsNullOrEmpty($searchType)) { "contains" } else { $searchType }
+
+# Set API headers for all further calls
+$headers = @{
+    "Authorization" = "Bearer $BearerToken"
+    "Content-Type"  = "application/json"
+}
+
+# Prepare to page through all accounts
+$AccountApiBase = "https://$PCloudSubdomain.privilegecloud.cyberark.cloud/PasswordVault/api/Accounts"
+$offset = 0
+$total = $null
+$allAccounts = @()
+
+Write-Log "Fetching all CyberArk accounts via REST API with parameters:"
+Write-Log "   search = $search"
+Write-Log "   searchType = $searchType"
+Write-Log "   sort = $sort"
+Write-Log "   limit = $limit"
+Write-Log "   filter = $filter"
+
+do {
+    $params = @()
+    if ($search)      { $params += "search=$($search)" }
+    if ($searchType)  { $params += "searchType=$($searchType)" }
+    if ($sort)        { $params += "sort=$($sort)" }
+    if ($limit)       { $params += "limit=$($limit)" }
+    if ($offset)      { $params += "offset=$($offset)" }
+    if ($filter)      { $params += "filter=$($filter)" }
+    $paramString = $params -join "&"
+    $AccountUri = "$AccountApiBase"
+    if ($paramString) { $AccountUri += "?$paramString" }
+
+    try {
+        $response = Invoke-RestMethod -Uri $AccountUri -Headers $headers -Method Get -ErrorAction Stop
+        if ($null -eq $response || $null -eq $response.accounts) {
+            Write-Log "WARNING: No accounts returned at offset $offset."
+            break
+        }
+        $allAccounts += $response.accounts
+        if ($null -eq $total) {
+            $total = $response.total
+            Write-Log "Total accounts to fetch: $total"
+        }
+        $offset += $limit
+        Write-Log "Fetched $($allAccounts.Count) of $total accounts so far..."
+    } catch {
+        Write-Log "ERROR: Failed to retrieve accounts - $_"
+        break
+    }
+} while ($allAccounts.Count -lt $total)
+
+if ($allAccounts.Count -eq 0) {
+    Write-Log "ERROR: No accounts found. Exiting."
+    exit
+}
+
+# Save debug raw API result
+$DebugFile = "E:\Installation Media\RemovePendingAccount\CyberArk_Accounts_Debug.json"
+$allAccounts | ConvertTo-Json -Depth 5 | Out-File $DebugFile
+Write-Log "Raw account API results saved to: $DebugFile"
+
+# Discover all custom property names present (for dynamic columns)
+$allCustomProps = @()
+foreach ($acct in $allAccounts) {
+    if ($acct.platformAccountProperties) {
+        $allCustomProps += $acct.platformAccountProperties.PSObject.Properties.Name
+    }
+}
+$allCustomProps = $allCustomProps | Select-Object -Unique
+
+# Add commonly-used account properties if not present
+$forceIncludeProps = @(
+    'Logon Account','Reconcile Account','extrapass1','extrapass3','LogonDomain','UserDN','Port','Database','PublicSSHKeyPath','UseSudoOnReconcile',
+    'Domain','ApplicationID','ActiveDirectoryID','ReconcileIsWinAccount','Notes','PopulateKey','ImpersonateUser',
+    'KeyID','ApplicationObjectID','AWSAccessKeyID','AWSAccountID'
+)
+$allCustomProps = $allCustomProps + $forceIncludeProps | Select-Object -Unique
+
+# Export Path
+$CsvFilePath = "E:\Installation Media\RemovePendingAccount\CyberArk_Accounts_Full.csv"
+
+# Utility: Convert bools to Yes/No
+function YesNo ($val) {
+    if ($null -eq $val) { return "No" }
+    if ($val -is [System.Management.Automation.PSObject] -and $val.PSObject.Properties.Name -contains 'IsActive') {
+        return $(if ($val.IsActive) { "Yes" } else { "No" })
+    }
+    return $(if ($val) { "Yes" } else { "No" })
+}
+
+# Build processed accounts report
+Write-Log "Processing and exporting extended account data..."
+$ProcessedAccounts = $allAccounts | ForEach-Object {
+    # --- Intuitive: dynamically extract logon/reconcile account by any friendly name or custom field ---
+    $logonAccount = $null
+    $reconcileAccount = $null
+    if ($_.platformAccountProperties) {
+        $logonAccount      = $_.platformAccountProperties["Logon Account"]
+        $reconcileAccount  = $_.platformAccountProperties["Reconcile Account"]
+
+        # Fallback to extrapass1/3
+        if (-not $logonAccount)     { $logonAccount = $_.platformAccountProperties["extrapass1"] }
+        if (-not $reconcileAccount) { $reconcileAccount = $_.platformAccountProperties["extrapass3"] }
+
+        # If still blank, search for any property containing "logon" or "reconcile"
+        if (-not $logonAccount) {
+            foreach ($prop in $_.platformAccountProperties.PSObject.Properties.Name) {
+                if ($prop -match '(?i)logon') {
+                    $logonAccount = $_.platformAccountProperties[$prop]
+                    break
+                }
+            }
+        }
+        if (-not $reconcileAccount) {
+            foreach ($prop in $_.platformAccountProperties.PSObject.Properties.Name) {
+                if ($prop -match '(?i)reconcile') {
+                    $reconcileAccount = $_.platformAccountProperties[$prop]
+                    break
+                }
+            }
+        }
+    }
+
+    # Collect all custom props for this account
+    $customProps = @{}
+    foreach ($p in $allCustomProps) {
+        $customProps[$p] = $null
+        if ($_.platformAccountProperties -and $_.platformAccountProperties.$p) {
+            $customProps[$p] = $_.platformAccountProperties.$p
+        }
+    }
+
+    [PSCustomObject]@{
+        id                       = $_.id
+        name                     = $_.name
+        address                  = $_.address
+        userName                 = $_.userName
+        safeName                 = $_.safeName
+        platformId               = $_.platformId
+        platformType             = $_.platformType
+        secretType               = $_.secretType
+        createdTime              = $_.createdTime
+        categoryModificationTime = $_.categoryModificationTime
+        secretManagement         = ($_.secretManagement | ConvertTo-Json -Compress)
+        # Yes/No for status flags (where available)
+        suspended                = YesNo $_.suspended
+        privileged               = YesNo $_.privileged
+        disabled                 = YesNo $_.disabled
+        # Direct dynamic extraction for logon/reconcile account (regardless of custom property name)
+        LogonAccount             = $logonAccount
+        ReconcileAccount         = $reconcileAccount
+    } + $customProps
+}
+
+# Export to CSV
+$ProcessedAccounts | Export-Csv -Path $CsvFilePath -NoTypeInformation
+Write-Log "✅ CyberArk full account report has been successfully exported to: $CsvFilePath"
+
+
+
+
+
+
+
+
+
+
+
+
+::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
 Using the same login as platform but instead this is for getaccount, generate a full extended account report
 https://docs.cyberark.com/privilege-cloud-shared-services/latest/en/content/sdk/getaccounts.htm
 
