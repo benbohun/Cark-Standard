@@ -1,5 +1,15 @@
 
-# CyberArk Account Report via CCP Credential Retrieval
+# CyberArk Account Report via CCP Credential Retrieval (With Process Logging)
+
+# --- Logging Utility ---
+$LogPath = "E:\Installation Media\RemovePendingAccount\CyberArk_AccountReport_RunLog.txt"
+Function Write-Log {
+    param([string]$Message, [string]$Color = "White")
+    $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $LogEntry = "$Timestamp - $Message"
+    Write-Host $LogEntry -ForegroundColor $Color
+    Add-Content -Path $LogPath -Value $LogEntry
+}
 
 # Settings for CCP/AIMWebService
 $CCPAddress = "https://vskau1p1231.cna.com"
@@ -12,40 +22,54 @@ $headers = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
 $headers.Add("Content-Type", "application/json")
 $windowsAuth = $false
 
-Write-Host "Retrieving CyberArk API credentials from CCP via Object method..." -ForegroundColor Cyan
+Write-Log "Retrieving CyberArk API credentials from CCP via Object method..." "Cyan"
 $ccpUrl = "$CCPAddress/$location/api/Accounts?AppID=$application&Safe=$safe&Object=$object"
-$response = Invoke-RestMethod $ccpUrl -Method 'GET' -Headers $headers -UseDefaultCredentials:$windowsAuth
-
-if (-not $response -or -not $response.Username -or -not $response.Content) {
-    Write-Host "ERROR: Failed to retrieve API credentials from CCP." -ForegroundColor Red
+try {
+    $response = Invoke-RestMethod $ccpUrl -Method 'GET' -Headers $headers -UseDefaultCredentials:$windowsAuth
+    if (-not $response -or -not $response.Username -or -not $response.Content) {
+        Write-Log "ERROR: Failed to retrieve API credentials from CCP." "Red"
+        exit 1
+    }
+    Write-Log "Successfully retrieved credentials for user: $($response.Username)" "Green"
+} catch {
+    Write-Log "ERROR: CCP credential fetch failed - $_" "Red"
     exit 1
 }
 
 $apiUsername = $response.Username
 $apiPassword = $response.Content | ConvertTo-SecureString -AsPlainText -Force
 
-Write-Host "Successfully retrieved credentials for user: $apiUsername" -ForegroundColor Green
-
 # Create credential object for psPAS
 $UPCred = New-Object System.Management.Automation.PSCredential ($apiUsername, $apiPassword)
 
 # Import psPAS module (auto-install if missing)
 if (!(Get-Module -ListAvailable -Name psPAS)) {
-    Write-Host "psPAS module not found, installing..." -ForegroundColor Yellow
+    Write-Log "psPAS module not found, installing..." "Yellow"
     Install-Module psPAS -Scope CurrentUser -Force
 }
 Import-Module psPAS
 
 # Connect to CyberArk Privilege Cloud using psPAS and fetched credentials
-Write-Host "Connecting to CyberArk Privilege Cloud with fetched credentials..." -ForegroundColor Cyan
-$header = Get-IdentityHeader -IdentityTenantURL "aat4012.id.cyberark.cloud" -psPASFormat -PCloudSubdomain "cna-prod" -UPCreds $UPCred
-Use-PASSession $header
-Write-Host "Authentication successful!" -ForegroundColor Green
+Write-Log "Connecting to CyberArk Privilege Cloud with fetched credentials..." "Cyan"
+try {
+    $header = Get-IdentityHeader -IdentityTenantURL "aat4012.id.cyberark.cloud" -psPASFormat -PCloudSubdomain "cna-prod" -UPCreds $UPCred
+    Use-PASSession $header
+    Write-Log "Authentication successful!" "Green"
+} catch {
+    Write-Log "ERROR: CyberArk authentication failed - $_" "Red"
+    exit 1
+}
 
 # Fetch platforms and safes (for workflow/policy info)
-Write-Host "Fetching platforms and safes..." -ForegroundColor Cyan
-$platforms = Get-PASPlatform
-$safes     = Get-PASSafe
+Write-Log "Fetching platforms and safes..." "Cyan"
+try {
+    $platforms = Get-PASPlatform
+    $safes     = Get-PASSafe
+    Write-Log "Fetched $($platforms.Count) platforms and $($safes.Count) safes."
+} catch {
+    Write-Log "ERROR: Could not fetch platforms or safes - $_" "Red"
+    exit 1
+}
 
 $platformsht = @{}
 $platforms | ForEach-Object { $platformsht[$_.PlatformID] = $_ }
@@ -53,12 +77,17 @@ $safesht = @{}
 $safes | ForEach-Object { $safesht[$_.SafeName] = $_ }
 
 # Fetch all accounts
-Write-Host "Fetching CyberArk accounts..." -ForegroundColor Cyan
-$accounts = Get-PASAccount
-
-if (!$accounts -or $accounts.Count -eq 0) {
-    Write-Warning "No accounts found! Please check your connection, permissions, or filters."
-    exit
+Write-Log "Fetching CyberArk accounts..." "Cyan"
+try {
+    $accounts = Get-PASAccount
+    if (!$accounts -or $accounts.Count -eq 0) {
+        Write-Log "No accounts found! Please check your connection, permissions, or filters." "Yellow"
+        exit
+    }
+    Write-Log "Fetched $($accounts.Count) accounts."
+} catch {
+    Write-Log "ERROR: Could not fetch accounts - $_" "Red"
+    exit 1
 }
 
 # Prepare array for report
@@ -80,7 +109,6 @@ $total = $accounts.Count
 foreach ($acct in $accounts) {
     $counter++
     Write-Progress -Activity "Processing accounts..." -Status "$counter of $total" -PercentComplete (($counter/$total)*100)
-
     try {
         $details = Get-PASAccount -id $acct.id
 
@@ -146,9 +174,8 @@ foreach ($acct in $accounts) {
         }
 
         $report += $reportObj
-
     } catch {
-        Write-Warning "Failed to process account: $($acct.id) - $_"
+        Write-Log "Failed to process account: $($acct.id) - $_" "Yellow"
     }
 }
 
@@ -156,9 +183,9 @@ foreach ($acct in $accounts) {
 $ReportPath = "E:\Installation Media\RemovePendingAccount\PASAccounts_ExtendedReport1.csv"
 try {
     $report | Export-Csv -NoTypeInformation -Path $ReportPath
-    Write-Host "`nFull extended CyberArk account report exported to: $ReportPath" -ForegroundColor Green
+    Write-Log "Full extended CyberArk account report exported to: $ReportPath" "Green"
 } catch {
-    Write-Error "Failed to export report to $ReportPath. $_"
+    Write-Log "Failed to export report to $ReportPath. $_" "Red"
 }
 
 
