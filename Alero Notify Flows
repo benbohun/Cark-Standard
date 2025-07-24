@@ -1,31 +1,25 @@
 {
-  "Name": "Notify on Alero Remote Access Login",
-  "Description": "Sends an email alert when a user successfully logs in via Alero (Remote Access).",
-  "Enabled": true,
-  "Steps": [
+  "name": "Notify on Alero Remote Access Login",
+  "description": "Send an email when a user logs in via Alero (remote access).",
+  "enabled": true,
+  "trigger": {
+    "type": "event",
+    "sourceId": "Alero",
+    "eventType": "RemoteAccessLogin"
+  },
+  "steps": [
     {
-      "Type": "Trigger",
-      "Name": "Alero Login Detected",
-      "EventType": "AleroLogin",  // Trigger on Alero-login events
-      "Options": {
-        "InvocationType": "OnEvent"
-      }
+      "type": "condition",
+      "name": "Only Success",
+      "expression": "event.result == 'Success'"
     },
     {
-      "Type": "Condition",
-      "Name": "Login Successful Check",
-      "Expression": "event.Result == 'Success'",
-      "ActionIfTrue": "Proceed",
-      "ActionIfFalse": "Stop"
-    },
-    {
-      "Type": "Utility",
-      "Name": "Send Email Notification",
-      "UtilityType": "Email",
-      "Options": {
-        "To": "security@nickyandretechnologyservices.com", // Change to your alert list
-        "Subject": "🔐 Alero Remote Access Login Alert: {{event.UserPrincipalName}}",
-        "Body": "User {{event.UserPrincipalName}} just logged in via Alero.\n\n• Time: {{event.Time}}\n• Source IP: {{event.SourceIP}}\n• Device: {{event.DeviceName}}\n\nIf this was unexpected, please investigate immediately."
+      "type": "sendEmail",
+      "name": "Email Alert",
+      "settings": {
+        "to": ["security@nickyandretechnologyservices.com"],
+        "subject": "Alero Login Alert – {{event.userEmail}}",
+        "body": "User {{event.userEmail}} logged in via Alero at {{event.timestamp}} from IP {{event.ipAddress}}."
       }
     }
   ]
