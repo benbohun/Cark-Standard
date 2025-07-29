@@ -1,45 +1,45 @@
-# Path to input CSV file
-$csvPath = "C:\Path\To\Users.csv"
+# Force PowerShell to use TLS 1.2 for secure connections
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-# Import users from CSV
-$users = Import-Csv -Path $csvPath
+# Prompt user for CyberArk credentials
+$cred = Get-Credential
+$Username = $cred.UserName
+$Password = $cred.GetNetworkCredential().Password
 
-# Store results
-$results = @()
+# Define CyberArk Privilege Cloud API URLs (Using alliantcredit subdomain)
+$Subdomain = "alliantcredit"
+$BaseURL = "https://$Subdomain.privilegecloud.cyberark.com/PasswordVault/API"
 
-foreach ($user in $users) {
-    $username = $user.sAMAccountName
+# Authentication URL
+$AuthURL = "$BaseURL/auth/Cyberark/Logon/"
 
-    try {
-        # Attempt to get user from AD
-        $adUser = Get-ADUser -Identity $username -Properties Enabled
-
-        # Determine status
-        $status = if ($adUser.Enabled) { "Active" } else { "Disabled" }
-    }
-    catch {
-        # If not found, mark as Not Found
-        $status = "Not Found"
-    }
-
-    # Add result to array
-    $results += [PSCustomObject]@{
-        sAMAccountName = $username
-        ADStatus       = $status
-    }
+# Authenticate and get session token
+try {
+    $AuthResponse = Invoke-RestMethod -Uri $AuthURL -Method POST -Body (@{ username=$Username; password=$Password } | ConvertTo-Json) -ContentType "application/json"
+    $AuthToken = $AuthResponse
+    Write-Host "Authentication successful!" -ForegroundColor Green
+} catch {
+    Write-Host "Authentication failed: $_" -ForegroundColor Red
+    exit
 }
 
-# Export to CSV
-$results | Export-Csv -Path "C:\Path\To\AD_User_Status_Report.csv" -NoTypeInformation
+# Set Authorization Header
+$Headers = @{
+    Authorization = $AuthToken
+    "Content-Type" = "application/json"
+}
 
-Write-Host "✅ Report generated: AD_User_Status_Report.csv"
+# DELETE all discovered accounts using the correct API URL
+$DeleteAllDiscoveredAccountsURL = "$BaseURL/DiscoveredAccounts/"
 
+try {
+    Invoke-RestMethod -Uri $DeleteAllDiscoveredAccountsURL -Method DELETE -Headers $Headers
+    Write-Host "All discovered accounts deleted successfully!" -ForegroundColor Green
+} catch {
+    Write-Host "Failed to delete discovered accounts. Error: $_" -ForegroundColor Red
+}
 
-
-Team,
- 
-The recently released CA25-21 involves a High severity vulnerability which has an impact of a Potential disclosure of sensitive information when connecting to a Linux target via PSM for SSH using the Remmina client.
- 
-Am not sure if we leverage this clinet in-house but we will need to open a RITM to inquire from the SC team.
- 
-Resolution to this is to use an SSH client other than Remmina, or disable the mechanism for requiring users to specify an access reason during login on the client.
+# Log off session
+$LogoffURL = "$BaseURL/auth/Logoff"
+Invoke-RestMethod -Uri $LogoffURL -Method POST -Headers $Headers | Out-Null
+Write-Host "Logged out successfully." -ForegroundColor Cyan
