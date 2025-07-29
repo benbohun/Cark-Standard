@@ -29,14 +29,21 @@ $Headers = @{
     "Content-Type" = "application/json"
 }
 
-# DELETE all discovered accounts using the correct API URL
-$DeleteAllDiscoveredAccountsURL = "$BaseURL/DiscoveredAccounts/"
+# GET all discovered pending accounts
+$GetDiscoveredAccountsURL = "$BaseURL/DiscoveredAccounts/"
 
 try {
-    Invoke-RestMethod -Uri $DeleteAllDiscoveredAccountsURL -Method DELETE -Headers $Headers
-    Write-Host "All discovered accounts deleted successfully!" -ForegroundColor Green
+    $DiscoveredAccounts = Invoke-RestMethod -Uri $GetDiscoveredAccountsURL -Method GET -Headers $Headers
+    if ($DiscoveredAccounts -and $DiscoveredAccounts.value.Count -gt 0) {
+        # Export discovered accounts to CSV
+        $ExportPath = "$env:USERPROFILE\Desktop\DiscoveredPendingAccounts_$(Get-Date -Format yyyyMMdd_HHmmss).csv"
+        $DiscoveredAccounts.value | Export-Csv -Path $ExportPath -NoTypeInformation
+        Write-Host "Discovered pending accounts exported to $ExportPath" -ForegroundColor Green
+    } else {
+        Write-Host "No discovered pending accounts found." -ForegroundColor Yellow
+    }
 } catch {
-    Write-Host "Failed to delete discovered accounts. Error: $_" -ForegroundColor Red
+    Write-Host "Failed to retrieve discovered pending accounts. Error: $_" -ForegroundColor Red
 }
 
 # Log off session
