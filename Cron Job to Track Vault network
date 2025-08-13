@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ========= Config via env or defaults =========
+HOST="${HOST:-vault-cna-prod.privilegecloud.cyberark.cloud}"
+PORT="${PORT:-1858}"
+TIMEOUT="${TIMEOUT:-5}"                 # curl connect timeout (s)
+LOG="${LOG:-/var/log/psmp_vault_latency.log}"
+
+ALERT_FAILS="${ALERT_FAILS:-3}"         # consecutive failures before alert
+ALERT_CONN_MS="${ALERT_CONN_MS:-300}"   # alert if TCP connect >= ms
+ALERT_DNS_MS="${ALERT_DNS_MS:-300}"     # alert if DNS lookup  >= ms
+# =============================================
+
+mkdir -p "$(dirname "$LOG")"
+touch "$LOG"
+
+# Run curl with timing fields; suppress body, capture stderr+timings
+line="$(curl -sS -o /dev/null \
+  --connect-timeout "$TIMEOUT" \
+  -w 'ts=%{%Y-%m-%dT%H:%M:%SZ}t rip=%{remote_ip} dns=%{time_namelookup} connect=%{time_connect} total=%{time_total} err=%{errormsg}' \
+  "telnet://$HOST:$PORT/" 2>&1 || true)"
+
+rc=$?  # curl exit code
+
+# Parse timing & fields
+ts="$(sed -n 's/.*ts=\([^ ]*\).*/\1/p' <<<"$line")"
+rip="$(sed -n 's/.*rip=\([^ ]*\).*/\1/p' <<<"$line")"
+dns_s="$(sed -n 's/.*dns=\([^ ]*\).*/\1/p' <<<"$line")"
+conn_s="$(sed -n 's/.*connect=\([^ ]*\).*/\1/p' <<<"$line")"
+tot_s="$(sed -n 's/.*total=\([^ ]*\).*/\1/p' <<<"$line")"
+err="$(sed -n 's/.*err=\(.*\)$/\1/p' <<<"$line")"
+
+# secs->ms (int)
+to_ms(){ awk '{printf("%d",$1*1000)}'; }
+dns_ms=$(printf "%s" "${dns_s:-0}" | to_ms)
+conn_ms=$(printf "%s" "${conn_s:-0}" | to_ms)
+tot_ms=$(printf "%s" "${tot_s:-0}" | to_ms)
+
+# Determine status
+status="OK"
+[[ $rc -ne 0 ]] && status="FAIL"
+[[ $rc -eq 6 ]]  && status="DNS_FAIL"      # Could not resolve host
+[[ $rc -eq 7 ]]  && status="CONNECT_FAIL"  # Failed to connect
+[[ $rc -eq 28 ]] && status="TIMEOUT"       # Operation timed out
+
+# Log CSV
+# timestamp,fqdn,port,remote_ip,status,dns_ms,connect_ms,total_ms,exit_code,error
+echo "$ts,$HOST,$PORT,${rip:--},$status,$dns_ms,$conn_ms,$tot_ms,$rc,${err:--}" >> "$LOG"
+
+# Failure state/alerting
+state="/var/run/vault_curl_probe.fail"
+mkdir -p "$(dirname "$state")"
+fails=0; [[ -f "$state" ]] && fails=$(<"$state")
+
+if [[ "$status" != "OK" ]]; then
+  fails=$((fails+1)); echo "$fails" > "$state"
+  if (( fails >= ALERT_FAILS )); then
+    logger -t vault-curl-probe "FAIL ($status) rc=$rc err='$err' host=$HOST port=$PORT rip=${rip:-n/a}"
+  fi
+else
+  # success: reset fail counter, check latency thresholds
+  echo 0 > "$state"
+  if (( conn_ms >= ALERT_CONN_MS )); then
+    logger -t vault-curl-probe "High TCP connect latency ${conn_ms}ms (dns=${dns_ms}ms tot=${tot_ms}ms) host=$HOST port=$PORT rip=${rip:-n/a}"
+  fi
+  if (( dns_ms  >= ALERT_DNS_MS )); then
+    logger -t vault-curl-probe "High DNS latency ${dns_ms}ms (conn=${conn_ms}ms tot=${tot_ms}ms) host=$HOST port=$PORT rip=${rip:-n/a}"
+  fi
+fi
+:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+
+Make it executable:
+
+bash
+Copy
+Edit
+sudo install -m 0755 /usr/local/bin/vault_curl_probe.sh /usr/local/bin/vault_curl_probe.sh
+:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+2) Cron job (every minute)
+Create /etc/cron.d/vault_curl_probe:
+
+c
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Adjust thresholds as needed
+* * * * * root HOST=vault-cna-prod.privilegecloud.cyberark.cloud PORT=1858 TIMEOUT=5 ALERT_FAILS=3 ALERT_CONN_MS=300 ALERT_DNS_MS=300 /usr/local/bin/vault_curl_probe.sh
+
+:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+3) Log rotation (14 days)
+/etc/logrotate.d/psmp_vault_latency:
+
+lua
+Copy
+Edit
+/var/log/psmp_vault_latency.log {
+  daily
+  rotate 14
+  missingok
+  notifempty
+  compress
+  delaycompress
+  create 0640 root root
+}
+
+:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+Tips
+If you use a proxy, add --noproxy '*' to the curl call.
+
+For DR or multiple endpoints, run multiple cron lines with different HOST/PORT.
+
+Feed the CSV into Splunk/ELK/Power BI for trend charts (dns_ms vs connect_ms).
+
+If you want Slack/Teams/email hooks instead of syslog, I can bolt on a minimal notifier, but this version keeps dependencies near-zero and works out of the box.
